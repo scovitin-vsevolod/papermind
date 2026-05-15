@@ -43,7 +43,7 @@ Edit `backend/.env`:
 CLAUDE_MODEL=claude-opus-4-7
 ```
 
-Restart `./scripts/dev.sh`. Verify at <http://localhost:8130/health> —
+Restart `./scripts/dev.sh`. Verify at <http://localhost:8109/health> —
 the response includes `claude_model`.
 
 ### Quick comparison run

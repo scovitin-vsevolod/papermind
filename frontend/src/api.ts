@@ -5,7 +5,12 @@
 // reviewable from one place and makes swapping the transport (e.g.
 // to React Query later) a one-file change.
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8130";
+// Default to a relative URL — Vite's dev server (see vite.config.ts) proxies
+// /api/* to the FastAPI backend. Same-origin in the browser, no CORS dance,
+// and a custom Valet/nginx domain "just works" without env tweaks.
+// Override with VITE_API_URL when running a built bundle pointed at a
+// non-proxied backend.
+const API_URL = import.meta.env.VITE_API_URL ?? "/api";
 
 export interface HealthResponse {
   status: string;

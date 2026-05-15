@@ -43,7 +43,7 @@ This single command:
 1. Starts Qdrant (`docker compose up -d`)
 2. Waits for Qdrant to become healthy
 3. Creates DB tables (Alembic replaces this in a later phase)
-4. Starts the backend (`uvicorn` on `:8130`) — and the frontend
+4. Starts the backend (`uvicorn` on `:8109`) — and the frontend
    once it exists
 
 Press **Ctrl+C** to stop the dev servers. Qdrant stays up.
@@ -57,9 +57,9 @@ Press **Ctrl+C** to stop the dev servers. Qdrant stays up.
 
 | What | Where |
 |---|---|
-| Backend | http://localhost:8130 |
-| OpenAPI docs | http://localhost:8130/docs |
-| Health | http://localhost:8130/health |
+| Backend | http://localhost:8109 |
+| OpenAPI docs | http://localhost:8109/docs |
+| Health | http://localhost:8109/health |
 | Qdrant dashboard | http://localhost:6333/dashboard |
 
 ## Layout

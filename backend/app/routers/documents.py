@@ -79,30 +79,50 @@ def upload_document(
     doc.status = DocumentStatus.EMBEDDING.value
     db.commit()
 
-    chunks = chunk_text(markdown)
+    # Wrap the chunk → embed → upsert phase so any crash (Qdrant unreachable,
+    # embedding model failed to load, ORM mismatch) lands on the Document
+    # row as a status=ERROR with the real error text, AND comes back to the
+    # client as a 500 with the same text — not as an opaque "Internal
+    # Server Error" with the traceback only in uvicorn stderr.
+    try:
+        chunks = chunk_text(markdown)
 
-    # Insert Chunk rows first so SQLite hands us their ids — those ids
-    # double as Qdrant point ids.
-    chunk_rows = [
-        Chunk(document_id=doc.id, position=c.position, text=c.text) for c in chunks
-    ]
-    db.add_all(chunk_rows)
-    db.flush()
-
-    vectors = embed([c.text for c in chunks])
-    qdrant_service.ensure_collection()
-    qdrant_service.upsert_chunks(
-        [
-            qdrant_service.UpsertItem(
-                point_id=row.id,
-                vector=vectors[i],
-                document_id=doc.id,
-                position=row.position,
-                text=row.text,
-            )
-            for i, row in enumerate(chunk_rows)
+        # Insert Chunk rows first so SQLite hands us their ids — those ids
+        # double as Qdrant point ids.
+        chunk_rows = [
+            Chunk(document_id=doc.id, position=c.position, text=c.text) for c in chunks
         ]
-    )
+        db.add_all(chunk_rows)
+        db.flush()
+
+        vectors = embed([c.text for c in chunks])
+        qdrant_service.ensure_collection()
+        qdrant_service.upsert_chunks(
+            [
+                qdrant_service.UpsertItem(
+                    point_id=row.id,
+                    vector=vectors[i],
+                    document_id=doc.id,
+                    position=row.position,
+                    text=row.text,
+                )
+                for i, row in enumerate(chunk_rows)
+            ]
+        )
+    except Exception as exc:
+        db.rollback()
+        # Reattach a fresh row reference so we can persist the error state
+        # (rollback detaches the in-flight Chunk inserts but the Document
+        # row was committed earlier).
+        doc = db.get(Document, doc.id)
+        if doc is not None:
+            doc.status = DocumentStatus.ERROR.value
+            doc.error = f"{type(exc).__name__}: {exc}"
+            db.commit()
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"ingestion failed at chunk/embed/upsert: {type(exc).__name__}: {exc}",
+        ) from exc
 
     doc.status = DocumentStatus.READY.value
     doc.chunk_count = len(chunks)

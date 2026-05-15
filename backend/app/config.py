@@ -23,13 +23,10 @@ class Settings(BaseSettings):
     database_url: str = Field(default="sqlite:///./papermind.db")
     embedding_model: str = Field(default="sentence-transformers/all-MiniLM-L6-v2")
     cors_origins: list[str] = Field(
-        # Vite picks the next free port when 5173 is taken (e.g. when another
-        # project is also running). Allow the first three to cover the common
-        # case of one or two sibling dev servers already up.
+        # PaperMind frontend is pinned to 5209 (strictPort:true) — Vite fails
+        # loudly if the port is taken, so there's no need to allow-list siblings.
         default=[
-            "http://localhost:5173",
-            "http://localhost:5174",
-            "http://localhost:5175",
+            "http://localhost:5209",
         ]
     )
 

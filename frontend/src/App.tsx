@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import {
   askQuestion,
@@ -240,7 +242,14 @@ function AskSection({
             <h3 className="mb-2 text-sm font-medium text-slate-500">
               Answer · {result.model}
             </h3>
-            <p className="whitespace-pre-wrap text-slate-900">{result.answer}</p>
+            {/* Claude responds in markdown — render it as such. `prose` gives
+                sensible defaults for headings/lists/code; `max-w-none` opts
+                out of the typography plugin's default 65ch line cap. */}
+            <div className="prose prose-slate prose-sm max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {result.answer}
+              </ReactMarkdown>
+            </div>
           </div>
           {result.citations.length > 0 && (
             <div>
@@ -256,7 +265,14 @@ function AskSection({
                     <div className="mb-1 font-mono text-xs text-slate-500">
                       [chunk:{c.chunk_id}] · doc {c.document_id} · pos {c.position}
                     </div>
-                    <div className="text-slate-700">{c.text}</div>
+                    {/* Chunks are extracted from markdown source docs, so
+                        rendering them as markdown preserves headings/lists/
+                        code blocks from the original. */}
+                    <div className="prose prose-slate prose-sm max-w-none text-slate-700">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {c.text}
+                      </ReactMarkdown>
+                    </div>
                   </li>
                 ))}
               </ul>

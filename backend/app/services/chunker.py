@@ -66,8 +66,12 @@ def chunk_text(
         nonlocal overlap_words, current, current_word_count
         if not current:
             return
-        prefix = " ".join(overlap_words) + " " if overlap_words else ""
-        full_text = (prefix + " ".join(current)).strip()
+        # Join packed paragraphs with "\n\n" to preserve markdown paragraph
+        # breaks. Overlap from the prior chunk is a flat sequence of words
+        # (no original structure to recover), so it's space-joined and
+        # placed on its own line above the new content.
+        prefix = " ".join(overlap_words) + "\n\n" if overlap_words else ""
+        full_text = (prefix + "\n\n".join(current)).strip()
         chunks.append(Chunk(text=full_text, position=len(chunks)))
         overlap_words = full_text.split()[-overlap:] if overlap > 0 else []
         current = []
@@ -89,8 +93,12 @@ def _count_words(s: str) -> int:
 
 
 def _normalise_paragraphs(text: str) -> list[str]:
+    # Preserve newlines so markdown structure (headings, lists, code blocks,
+    # tables) survives into the chunk text. Only collapse runs of horizontal
+    # whitespace (spaces, tabs) — vertical whitespace inside a paragraph
+    # carries meaning for the renderer downstream.
     raw = _PARAGRAPH_BREAK.split(text.strip())
-    return [re.sub(r"\s+", " ", p).strip() for p in raw if p.strip()]
+    return [re.sub(r"[ \t]+", " ", p).strip() for p in raw if p.strip()]
 
 
 def _split_paragraph_into_sentences(paragraph: str) -> list[str]:

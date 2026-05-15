@@ -48,5 +48,15 @@ def to_markdown(content: bytes, filename: str) -> str:
 
     text = (result.text_content or "").strip()
     if not text:
+        # PDFs are the usual offenders here: scanned documents have no text
+        # layer at all, so a successful parse still yields zero text. OCR
+        # is intentionally out of scope for Phase 1 (markitdown's OCR extras
+        # pull a heavy Tesseract stack).
+        if extension == ".pdf":
+            raise LoaderError(
+                f"{filename!r} parsed but produced empty text — this looks like a "
+                "scanned PDF (no text layer). Text-only PDFs are supported; "
+                "scanned PDFs need OCR, which isn't enabled yet."
+            )
         raise LoaderError(f"{filename!r} parsed but produced empty text")
     return text
