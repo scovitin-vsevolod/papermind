@@ -1,0 +1,170 @@
+# Phase 1 Retro — MVP RAG
+
+Written at the end of Phase 1, before opening Phase 2. The goal of
+this file is to capture what was *surprising* or *non-obvious*, so the
+same lessons don't have to be re-discovered in Phase 2.
+
+## What got built
+
+A working RAG over arbitrary documents:
+
+- Backend: FastAPI + SQLite + Qdrant + Claude API + `sentence-transformers`
+- 50 tests, lint clean
+- Frontend: Vite + React + TS + Tailwind 4, single-file UI
+- One-command dev launcher (`./scripts/dev.sh`)
+- Stack rationale, model docs, and a step-level roadmap committed
+  alongside the code
+
+End-to-end flow: upload PDF/DOCX/MD/TXT → it gets parsed,
+chunked, embedded, stored in Qdrant. Ask a question → it gets
+embedded, matched, sent to Claude with retrieved chunks, answer comes
+back with citations.
+
+## Surprises and lessons
+
+### `:memory:` mode is the right call for tests, almost everywhere
+
+Both Qdrant and SQLite support in-process modes that mimic the real
+thing without network or filesystem state. We used both:
+
+- `QdrantClient(":memory:")` — fully functional Qdrant, just in-process.
+- `sqlite:///:memory:` with `StaticPool` — in-memory DB, one
+  connection across all sessions (default pool gives every session a
+  fresh empty DB and you lose your hour figuring out "no such table").
+
+Default-mocking is a temptation in Python testing. For external
+services that ship an in-process mode, **the in-process mode wins**.
+Contract drift in `qdrant-client` or SQLAlchemy fails our tests
+loudly; a hand-written mock would silently pass while production
+breaks. The 4-second test runtime is worth it.
+
+`FakeClaude` is the exception: Anthropic doesn't ship an offline
+mode, so we built a tiny double with the same interface as
+`client.messages.create()`. Same idea — mimic the interface, not the
+behavior.
+
+### The embedding model is the binding constraint, not the LLM
+
+The original chunker plan said "~800-token chunks with ~100-token
+overlap". That's the wrong sizing — `all-MiniLM-L6-v2` has a
+**256-token window**. An 800-token chunk gets truncated; you'd embed
+the first third of the text and silently lose the rest. After
+correction: 200 words / 30 overlap (~250 / 40 tokens).
+
+The lesson generalizes: when you have N components in a pipeline,
+size everything for the **smallest window**, not the model you think
+of as "the main one". In Phase 2 when we swap to `voyage-3`
+(32k-token window), chunk sizing should be re-evaluated as a
+deliberate experiment, not a copy-paste.
+
+### `chunk.id` IS the Qdrant point_id — no UUIDs
+
+The first design had a `qdrant_point_id: String(64)` field on the
+Chunk model, intended to hold a UUID. Then: why? SQLite already
+hands us a unique integer ID on `flush()`. Use that as the Qdrant
+point_id. One ID space, no synchronization, no UUID library.
+
+This is a tiny decision but it's a pattern: **resist plurals when a
+singular will do**. Multiple IDs for the same thing means at least
+one is redundant, and probably eventually inconsistent.
+
+### Prompt caching has a minimum, and 150 tokens isn't it
+
+I almost added `cache_control: {"type": "ephemeral"}` to the system
+prompt for `/ask` reflexively. The `claude-api` skill caught it:
+Opus 4.7 has a **4096-token minimum** for caching to activate.
+Smaller prefixes silently no-op — `cache_creation_input_tokens: 0`,
+no error, just wasted ceremony.
+
+The broader lesson: prompt caching is "free" only when the cached
+prefix is both **stable** and **large enough**. Hot tips:
+- Don't interpolate `datetime.now()` into the system prompt.
+- Don't switch models mid-conversation.
+- Don't reorder a tool list non-deterministically.
+- Don't cache a 150-token system prompt.
+
+### Citations: only return chunks the model *actually* cited
+
+It's tempting to return all retrieved chunks as "the context Claude
+used". That's misleading. Claude might cite 1 of 5; the other 4 are
+just things we showed it. Returning all 5 implies the answer rests on
+them.
+
+Fix: parse `[chunk:N]` out of the answer, return only those.
+Hallucinated IDs (`[chunk:99]` when 99 wasn't retrieved) get
+filtered. The test `test_ask_drops_hallucinated_chunk_ids_not_in_retrieved_hits`
+stands guard.
+
+### `StaticPool` for in-memory SQLite is non-obvious
+
+In a single line: in-memory SQLite makes a fresh DB **per
+connection**. With SQLAlchemy's default pool, the test client opens a
+new connection for each request — and gets an empty database.
+Tables you created during fixture setup were on a different
+connection.
+
+`poolclass=StaticPool` pins all sessions to one connection. This is
+also the answer to ~80% of "I created the table, why does the test
+say it doesn't exist" Stack Overflow questions.
+
+### Vite's auto-port-jump bit us once
+
+`localhost:5173` is taken by Sherpa's dev server in this workspace.
+Vite happily moved to 5175 and we hit the page expecting it to be on
+5173 — got Sherpa's UI instead. Two fixes:
+
+1. CORS allowlist now covers 5173-5175.
+2. Always read the actual URL from Vite's startup banner before
+   testing.
+
+This will keep biting if more sibling projects come online. A more
+robust pattern in Phase 4 deploys: pin Vite's port explicitly per
+project (`--port 5176`), or run dev servers in their own
+docker-compose so each has a stable port mapping.
+
+## Interview talking points (Phase 1 specific)
+
+When the time comes to talk about this on a Junior AI Developer
+interview, three honest threads:
+
+1. **"I deliberately didn't use LangChain or LlamaIndex in Phase 1."**
+   Hand-rolling the pipeline means I can answer "what does
+   chunking/embedding/retrieval *actually* do?" with code I wrote. A
+   framework would have hidden it.
+
+2. **"I picked Qdrant over Milvus on operational grounds."** Sibling
+   project Sherpa runs Milvus — three containers (Milvus + etcd +
+   MinIO), three failure modes. Qdrant is one container. For a
+   single-developer learning project, the right trade-off is the
+   simpler one.
+
+3. **"Tests use real Qdrant in-memory + a `FakeClaude` double."**
+   Different services need different test strategies. The reasoning
+   for each is explicit. The full suite is hermetic — no network,
+   no Docker — but exercises the real client APIs.
+
+## What's in scope for Phase 2
+
+Per [ROADMAP.md](../ROADMAP.md):
+
+- Claude tool use (web search, calculator, fetch URL)
+- OpenAI integration + side-by-side comparison UI
+- `voyage-3` embeddings swap with retrieval-quality measurement
+- A small `docs/retrieval-experiment.md` writeup of the comparison
+
+The natural first sub-task is tool use, because it doesn't touch the
+RAG pipeline — it's a separate Claude capability layered on top.
+Phase 2 tests can use the same `FakeClaude` pattern, just with
+richer fake responses (multi-turn tool_use blocks).
+
+## What's NOT in scope until Phase 4
+
+- Real auth / multi-user
+- Production deploy (Fly.io)
+- Persistent uploads beyond the local `papermind.db`
+- Background ingest workers (current path is synchronous in-request)
+- Streaming responses (`/ask` is non-streaming for now)
+
+Each of those is justified on its own; collectively they'd have
+tripled Phase 1's scope. Phase 1's job was "prove the RAG loop
+works"; it does.

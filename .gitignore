@@ -1,0 +1,39 @@
+# Python
+backend/.venv/
+backend/.uv/
+backend/uv.lock
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/*.egg-info/
+backend/.coverage
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.tsbuildinfo
+
+# Env
+**/.env
+**/.env.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Local data
+**/papermind.db
+**/papermind.db-journal
+backend/uploads/
+
+# Docker bind mounts (named volumes managed by docker itself)
+infra/volumes/
+
+# Claude Code local settings (machine-specific paths and permissions)
+.claude/settings.local.json
