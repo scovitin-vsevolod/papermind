@@ -1,6 +1,6 @@
 # PaperMind
 
-[![CI](https://github.com/REPLACE-ME-with-your-username/PaperMind/actions/workflows/ci.yml/badge.svg)](https://github.com/REPLACE-ME-with-your-username/PaperMind/actions/workflows/ci.yml)
+[![CI](https://github.com/scovitin-vsevolod/papermind/actions/workflows/ci.yml/badge.svg)](https://github.com/scovitin-vsevolod/papermind/actions/workflows/ci.yml)
 
 Personal research companion built on the Claude API. Upload documents
 (PDF, DOCX, MD, TXT, HTML, …), ask questions grounded in their content
