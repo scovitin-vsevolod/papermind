@@ -184,6 +184,57 @@ def read_graph(document_id: int | None = None) -> GraphPayload:
     return GraphPayload(nodes=nodes, edges=edges)
 
 
+def find_neighbours(entity_names: list[str], *, depth: int = 1) -> list[GraphNode]:
+    """Return the seed entities + their N-hop neighbours.
+
+    Used by GraphRAG (`services/graph_rag.py`) to expand the set of
+    entities mentioned in a question — once we have the seeds and
+    their neighbours, we can pull in the documents that mention any
+    of them, not just the documents matching the question text
+    directly.
+
+    For Phase 5 only ``depth=1`` is supported. Deeper walks need
+    cycle-handling and would inflate the candidate set quickly — the
+    1-hop version is what the academic GraphRAG papers call "local
+    context retrieval" and it's the cheapest useful step.
+    """
+    if not entity_names or depth < 1:
+        return []
+
+    with _driver().session() as session:
+        seed_records = session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names "
+            "RETURN e.name AS name, e.type AS type, "
+            "coalesce(e.document_ids, []) AS document_ids",
+            names=entity_names,
+        ).data()
+        neighbour_records = session.run(
+            "MATCH (e:Entity)-[:RELATES]-(n:Entity) "
+            "WHERE e.name IN $names "
+            "RETURN DISTINCT n.name AS name, n.type AS type, "
+            "coalesce(n.document_ids, []) AS document_ids",
+            names=entity_names,
+        ).data()
+
+    # Deduplicate by name — a neighbour can be another seed, or appear
+    # via multiple relations. First occurrence wins.
+    seen: set[str] = set()
+    out: list[GraphNode] = []
+    for rec in seed_records + neighbour_records:
+        name = rec["name"]
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append(
+            GraphNode(
+                name=name,
+                type=rec["type"],
+                document_ids=list(rec["document_ids"]),
+            )
+        )
+    return out
+
+
 def delete_for_document(document_id: int) -> None:
     """Remove this document's contribution to the graph.
 

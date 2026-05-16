@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Query
 from app.schemas import AskRequest, AskResponse, CitationOut, ToolUseOut
-from app.services import claude, openai_provider, qdrant
+from app.services import claude, graph_rag, openai_provider, qdrant
 from app.services.embeddings import embed
 
 router = APIRouter(prefix="/ask", tags=["ask"])
@@ -29,18 +29,35 @@ router = APIRouter(prefix="/ask", tags=["ask"])
 def ask(payload: AskRequest, db: Session = Depends(get_db)) -> AskResponse:
     qdrant.ensure_collection()  # idempotent — handles /ask before any upload
     query_vector = embed([payload.question])[0]
-    hits = qdrant.search(
+    vector_hits = qdrant.search(
         query_vector=query_vector,
         top_k=payload.top_k,
         document_id=payload.document_id,
     )
-    if not hits and payload.document_id is not None:
+    if not vector_hits and payload.document_id is not None:
         # Document filter found nothing — more useful as 404 than as
         # an empty-context call to Claude.
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             f"no chunks found for document_id={payload.document_id}",
         )
+
+    # Phase 5: optionally augment the hit list with graph-derived chunks.
+    # When the flag is off, we still wrap each hit as source="vector" so
+    # the downstream code path stays uniform.
+    if payload.use_graph:
+        augmented = graph_rag.augment(
+            question=payload.question,
+            question_vector=query_vector,
+            vector_hits=vector_hits,
+            document_id=payload.document_id,
+        )
+    else:
+        augmented = [
+            graph_rag.AugmentedHit(hit=h, source="vector") for h in vector_hits
+        ]
+    hits = [ah.hit for ah in augmented]
+    source_by_chunk = {ah.hit.chunk_id: ah.source for ah in augmented}
 
     if payload.provider == "openai":
         oa_contexts = [
@@ -76,6 +93,7 @@ def ask(payload: AskRequest, db: Session = Depends(get_db)) -> AskResponse:
             document_id=h.document_id,
             position=h.position,
             text=h.text,
+            source=source_by_chunk.get(h.chunk_id, "vector"),
         )
         for h in hits
         if h.chunk_id in cited

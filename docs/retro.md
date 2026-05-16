@@ -5,6 +5,87 @@ sections — the value is the timestamped trail of what you learned when.
 
 ---
 
+## Phase 5 retro — GraphRAG (the graph finally pays rent)
+
+### Why this exists
+
+A reviewer of the project pointed out that Phase 3 built a knowledge
+graph that the rest of the system didn't actually use — `/ask` was
+purely vector. The graph was a pretty visualisation, not retrieval
+infrastructure. Phase 5 closes that gap.
+
+The narrative changes from "I built a knowledge graph" to "I built a
+knowledge graph that **measurably affects retrieval**". That's the
+difference between a junior portfolio piece and one that holds up to
+"so what does it do?" follow-up questions.
+
+### What got built
+
+- `services/graph_rag.py` — one function, `augment()`, that runs after
+  vector search when the request opts in. It extracts question
+  entities through the existing Claude JSON-mode pipeline, looks up
+  1-hop neighbours in Neo4j, and pulls one extra chunk per related
+  document from Qdrant. Capped at 3 extra hits, 8 candidate documents.
+- `CitationOut.source` tags every citation `"vector"` or `"graph"`.
+  The UI surfaces graph-derived citations with an amber badge — same
+  pattern as Phase 2's tool-use rows, so users see provenance.
+- `backend/scripts/graph_experiment.py` — a focused recall@5 harness
+  that runs the same 10 queries through both modes and writes the
+  numbers to `docs/graph-experiment.md`.
+
+### Surprises and lessons
+
+**The "if it fails, never block the user" pattern paid off again.**
+Phase 3 wrapped graph operations in best-effort try/except at the
+*ingest* side. Phase 5 added the same shape at the *query* side:
+extraction failure → return vector hits, Neo4j outage → return vector
+hits, no entities in the question → return vector hits. The /ask
+endpoint never fails because the graph is broken. This is the right
+shape for an *augmentation* — it should add value when it works and
+disappear when it doesn't.
+
+**The experiment script bypasses extraction on purpose.** When you're
+measuring "does the graph help?", you want to separate two questions:
+(a) is graph-augmented retrieval a good idea in principle, and (b)
+is our extraction pipeline accurate enough to feed it? The script
+seeds the graph directly so it answers (a). Production answers (b)
+implicitly, but a noisy extraction muddies the (a) signal — separate
+them.
+
+**Recall@5 on a 10-doc corpus is too coarse for a real verdict.** This
+is acknowledged in the experiment doc. The harness exists to **show
+the shape of the measurement**, not to claim "graph wins by X%". On
+a real corpus with hundreds of docs and ambiguous questions, you'd
+want recall@10, MRR, and probably LLM-as-judge for "is this answer
+better with the graph". Phase 5 builds the harness; bigger numbers
+need a bigger corpus.
+
+### Interview talking point (Phase 5 specific)
+
+> "Phase 3 built the graph. Phase 5 measured whether it helps. The
+> answer on my small test corpus is 'sometimes, on questions phrased
+> around an entity whose name isn't repeated in the relevant chunk' —
+> which is exactly the case GraphRAG is supposed to win. I'd want to
+> repeat the measurement on a 1000+ document corpus before claiming
+> production readiness, but the harness is there and re-runs
+> idempotently. That's the difference between 'I built a knowledge
+> graph' and 'I built a measured retrieval system that uses one'."
+
+### What's still out of scope
+
+- **Multi-hop expansion.** Only `depth=1` neighbours. 2-hop would
+  often surface relevant docs but also blows up the candidate set —
+  needs ranking, not just enumeration.
+- **Cross-chunk entity coreference.** "The company" and "Anthropic"
+  are different strings; the current extraction treats them as
+  different entities. Real GraphRAG (Microsoft's, for one) does
+  community detection + coreference resolution as separate phases.
+- **Query-side entity matching against the graph.** Right now we
+  trust Claude's extraction. A hybrid (string match for high-precision
+  hits + Claude for synonyms) would be cheaper and more robust.
+
+---
+
 ## Phase 4 retro — tests, CI/CD, deploy
 
 ### What got built

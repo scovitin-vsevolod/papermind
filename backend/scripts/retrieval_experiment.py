@@ -32,10 +32,10 @@ from pathlib import Path
 # Make the package importable when running this script directly.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from qdrant_client import models  # noqa: E402
 
 from app.config import settings  # noqa: E402
-from app.services import embeddings, qdrant as qdrant_service  # noqa: E402
+from app.services import embeddings  # noqa: E402
+from app.services import qdrant as qdrant_service
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REPORT_PATH = REPO_ROOT / "docs" / "retrieval-experiment.md"

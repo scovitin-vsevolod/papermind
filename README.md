@@ -23,14 +23,22 @@ Developer interview.
 - **Knowledge graph.** Per-chunk entity/relation extraction via Claude's
   JSON-schema mode, deduplicated into Neo4j, rendered with
   `react-force-graph-2d` in the browser.
+- **GraphRAG.** When the request opts in (`use_graph=true`), the
+  knowledge graph augments vector retrieval: extract question
+  entities, walk 1-hop neighbours, pull additional chunks from
+  related documents. Each citation is tagged with its source
+  (`vector` or `graph`) for full provenance.
 - **Side-quest harnesses.** `backend/scripts/retrieval_experiment.py`
   runs a recall@5 A/B between local MiniLM and voyage-3.
+  `backend/scripts/graph_experiment.py` measures the lift from
+  graph augmentation on top of a fixed embedding.
 
 - [`CLAUDE.md`](CLAUDE.md) — stack rationale and assistant context
 - [`ROADMAP.md`](ROADMAP.md) — step-by-step plan with progress checkboxes
 - [`docs/models.md`](docs/models.md) — current model defaults and how to switch
 - [`docs/retro.md`](docs/retro.md) — phase-by-phase retros: surprises, lessons, interview talking points
 - [`docs/retrieval-experiment.md`](docs/retrieval-experiment.md) — MiniLM vs voyage-3 recall@5 harness
+- [`docs/graph-experiment.md`](docs/graph-experiment.md) — vector vs vector+graph recall@5 harness (GraphRAG lift)
 - [`docs/deploy.md`](docs/deploy.md) — Fly.io deployment recipe
 
 ## Stack

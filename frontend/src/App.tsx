@@ -187,6 +187,7 @@ function AskSection({
   const [scope, setScope] = useState<"all" | number>("all");
   const [compare, setCompare] = useState(false);
   const [useTools, setUseTools] = useState(false);
+  const [useGraph, setUseGraph] = useState(false);
 
   // Two independent slots so each provider's pane updates as soon as its
   // own request comes back (no waiting for the slower one).
@@ -205,6 +206,7 @@ function AskSection({
         document_id: scope === "all" ? null : scope,
         provider,
         use_tools: provider === "claude" ? useTools : false,
+        use_graph: useGraph,
       });
       setState({ status: "ok", response });
     } catch (e) {
@@ -271,6 +273,17 @@ function AskSection({
               onChange={(e) => setUseTools(e.target.checked)}
             />
             Enable tools (web_search · web_fetch · calculator)
+          </label>
+          <label
+            className="flex items-center gap-1"
+            title="Expand retrieval through the knowledge graph: extract entities from the question, look up their neighbours, pull in chunks from related documents."
+          >
+            <input
+              type="checkbox"
+              checked={useGraph}
+              onChange={(e) => setUseGraph(e.target.checked)}
+            />
+            Use knowledge graph (GraphRAG)
           </label>
         </div>
         <textarea
@@ -363,8 +376,18 @@ function ResultBody({ response }: { response: AskResponse }) {
                 key={c.chunk_id}
                 className="rounded bg-slate-50 px-3 py-2 text-sm"
               >
-                <div className="mb-1 font-mono text-xs text-slate-500">
-                  [chunk:{c.chunk_id}] · doc {c.document_id} · pos {c.position}
+                <div className="mb-1 flex items-center gap-2 font-mono text-xs text-slate-500">
+                  <span>
+                    [chunk:{c.chunk_id}] · doc {c.document_id} · pos {c.position}
+                  </span>
+                  {c.source === "graph" && (
+                    <span
+                      className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-900"
+                      title="Surfaced via knowledge-graph expansion — vector search would have missed this chunk."
+                    >
+                      via graph
+                    </span>
+                  )}
                 </div>
                 <div className="prose prose-slate prose-sm max-w-none text-slate-700">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>

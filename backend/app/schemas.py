@@ -38,6 +38,14 @@ class AskRequest(BaseModel):
             "Only applies when provider='claude'."
         ),
     )
+    use_graph: bool = Field(
+        default=False,
+        description=(
+            "If true, augment vector retrieval with graph-derived chunks: "
+            "extract entities from the question, expand via Neo4j neighbours, "
+            "pull additional candidates from related documents."
+        ),
+    )
     provider: Literal["claude", "openai"] = Field(
         default="claude",
         description="Which LLM to ask. 'openai' uses GPT-4 via the OpenAI SDK.",
@@ -49,6 +57,11 @@ class CitationOut(BaseModel):
     document_id: int
     position: int
     text: str
+    source: Literal["vector", "graph"] = Field(
+        default="vector",
+        description="How this chunk was surfaced — 'vector' is plain Qdrant "
+        "search, 'graph' means it was pulled in via knowledge-graph expansion.",
+    )
 
 
 class ToolUseOut(BaseModel):

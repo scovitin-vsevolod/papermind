@@ -261,6 +261,35 @@ deploy to Fly.io.
 
 ---
 
+---
+
+## Phase 5 — GraphRAG (added after Phase 4)
+
+Phase 3 built the graph; Phase 5 makes it pull its weight. The
+knowledge graph stops being a visualisation and starts contributing
+chunks to the `/ask` retrieval set.
+
+- [x] **5.1 Graph-augmented retrieval.** `services/graph_rag.py:augment()`
+  runs after vector search when `AskRequest.use_graph=True`: extract
+  entities from the question (same Claude JSON-mode pipeline used at
+  ingest), find 1-hop neighbours via `graph.find_neighbours()`, pull
+  the best chunk per candidate document from Qdrant. Caps:
+  `_MAX_RELATED_DOCS=8`, `_MAX_EXTRA_HITS=3`. Failures in extraction
+  or Neo4j degrade silently to vector-only — `/ask` never fails on
+  graph problems. `CitationOut.source` tags each citation `"vector"`
+  or `"graph"` so the UI can show provenance. 7 new tests, including
+  Neo4j-outage and extraction-failure paths.
+- [x] **5.2 Frontend "GraphRAG" toggle + provenance badge.** Third
+  checkbox in the Ask section; graph-derived citations get an
+  amber `via graph` badge so the user can see which chunks vector
+  alone would have missed.
+- [x] **5.3 Measurement harness.** `backend/scripts/graph_experiment.py`:
+  same 10-doc corpus + 10 queries, two runs (vector only vs vector+
+  graph), recall@5 per query and mean. Seeds the graph directly into
+  Neo4j to isolate retrieval from extraction quality — answers
+  "would a perfect graph help?" rather than the noisier "does our
+  extraction pipeline help?". Output → `docs/graph-experiment.md`.
+
 ## Conventions
 
 - A step is "done" when there's a **working demo** described next to it

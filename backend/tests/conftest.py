@@ -202,9 +202,30 @@ class _FakeNeo4jSession:
                 if doc_id not in existing["document_ids"]:
                     existing["document_ids"].append(doc_id)
             return _FakeNeo4jResult()
+        # Phase 5 first: graph-RAG neighbour queries use `WHERE e.name IN $names`
+        # which doesn't overlap with the legacy $doc_id queries below. Match
+        # this one early so the broader checks below don't intercept it.
+        if "where e.name in $names" in cypher_lower:
+            names = set(params["names"])
+            if "(e:entity)-[:relates]-(n:entity)" in cypher_lower:
+                # Neighbours of the seed set.
+                related: list[dict[str, Any]] = []
+                seen: set[str] = set()
+                for r in self.driver.relations.values():
+                    for side, other in (("head", "tail"), ("tail", "head")):
+                        if r[side] in names and r[other] not in seen:
+                            entity = self.driver.entities.get(r[other])
+                            if entity is not None:
+                                seen.add(r[other])
+                                related.append(entity)
+                return _FakeNeo4jResult(rows=related)
+            # Seeds-only query.
+            return _FakeNeo4jResult(
+                rows=[e for n, e in self.driver.entities.items() if n in names]
+            )
         if (
             "match (e:entity)" in cypher_lower
-            and "where" in cypher_lower
+            and "$doc_id" in cypher_lower
             and "return" in cypher_lower
         ):
             doc_id = params["doc_id"]
@@ -216,7 +237,10 @@ class _FakeNeo4jSession:
             )
         if "match (e:entity)" in cypher_lower and "return" in cypher_lower:
             return _FakeNeo4jResult(rows=list(self.driver.entities.values()))
-        if "match (h:entity)-[r:relates]->(t:entity)" in cypher_lower and "where" in cypher_lower:
+        if (
+            "match (h:entity)-[r:relates]->(t:entity)" in cypher_lower
+            and "$doc_id" in cypher_lower
+        ):
             doc_id = params["doc_id"]
             head_names = {n for n, e in self.driver.entities.items() if doc_id in e["document_ids"]}
             return _FakeNeo4jResult(

@@ -34,6 +34,7 @@ export interface CitationOut {
   document_id: number;
   position: number;
   text: string;
+  source: "vector" | "graph";
 }
 
 export interface AskResponse {
@@ -51,6 +52,7 @@ export interface AskRequest {
   document_id?: number | null;
   provider?: Provider;
   use_tools?: boolean;
+  use_graph?: boolean;
 }
 
 export interface ToolUseOut {
