@@ -290,6 +290,73 @@ chunks to the `/ask` retrieval set.
   "would a perfect graph help?" rather than the noisier "does our
   extraction pipeline help?". Output → `docs/graph-experiment.md`.
 
+---
+
+## Phase 6 — Closed system: auth (added after Phase 5)
+
+PaperMind is a single-tenant personal app. The deliberate non-feature
+here is the absence of a public `/auth/register` endpoint — users come
+into existence ONLY through a server-side CLI tool. That's the entire
+access-control story: if you control the box, you control who logs in.
+
+- [x] **6.1 Backend auth primitives.** `services/auth.py` — bcrypt
+  (cost 12) for password storage, JWT HS256 for session tokens.
+  `app/models.py` adds a `User` row (email unique-indexed, password
+  hash, `is_active`, `created_at`). `app/schemas.py` adds
+  `LoginRequest` / `UserOut` / `LoginResponse`. Config picks up
+  `JWT_SECRET` and `JWT_SESSION_DAYS` from env with safe dev defaults.
+- [x] **6.2 Login / logout / whoami.** `routers/auth.py`:
+  `POST /auth/login` returns the user and sets a `papermind_session`
+  httpOnly cookie (Secure, SameSite=lax, JWT inside). Verifies the
+  password unconditionally — even when the user doesn't exist — so the
+  timing of "no such user" vs "wrong password" matches (small win
+  against email enumeration). `POST /auth/logout` clears the cookie.
+  `GET /auth/me` returns the current user so the frontend can decide
+  login vs main UI on page load.
+- [x] **6.3 Protect-by-default.** `app/auth_deps.py:get_current_user`
+  reads the cookie OR `Authorization: Bearer …` (so curl/scripts
+  still work), decodes the JWT, loads the row. Routers `documents`,
+  `ask`, `graph` now declare `dependencies=[Depends(get_current_user)]`
+  at the router level — opt-in to public is the new default, the
+  opposite of opt-in to auth.
+- [x] **6.4 CLI: create_user.** `backend/app/cli/create_user.py` —
+  interactive prompts for email (Pydantic `EmailStr`) and password
+  (`getpass`, 8+ chars, confirmed). Also accepts a `--non-interactive`
+  flag taking `PAPERMIND_EMAIL` / `PAPERMIND_PASSWORD` env vars so it
+  can be driven from CI / Ansible. Refuses to overwrite an existing
+  email. Calls `Base.metadata.create_all(engine)` defensively so a
+  fresh DB Just Works.
+  Run on the server with: `uv run python -m app.cli.create_user`.
+- [x] **6.5 Frontend gate.** `App.tsx` probes `GET /auth/me` on mount.
+  401 → `LoginScreen`, 200 → main UI with the user's email + a
+  "Sign out" button in the header. Any subsequent API call that
+  returns 401 (token expired, user deleted, secret rotated) drops the
+  user back to the login screen. `api.ts` ships an `ApiError` class so
+  callers can branch on `.status === 401` without parsing strings.
+- [x] **6.6 Tests.** 23 new tests in `tests/test_auth.py` covering the
+  login success path, wrong-password / missing-user / inactive paths,
+  payload validation, logout cookie clearing, `/auth/me` via cookie
+  AND bearer header, expired / tampered / deleted-user tokens, and a
+  401 sweep across `/documents` `/ask` `/graph`. The existing 105
+  tests keep passing because `conftest.py` adds a
+  `dependency_overrides[get_current_user]` for the standard `client`
+  fixture and a separate `unauthenticated_client` for tests that need
+  to exercise the real auth flow.
+
+Trade-offs picked here:
+
+- **JWT in httpOnly cookie, not localStorage.** JS can't read it, so
+  XSS can't lift the token. Cookies auto-replay on same-origin fetch,
+  so the React code doesn't have to thread tokens through every call.
+- **Stateless sessions, no server-side store.** Logout doesn't
+  invalidate the token on the server — it just clears the cookie. A
+  stolen token stays valid until its `exp`. Acceptable for a
+  single-tenant app; the escape hatch is rotating `JWT_SECRET`, which
+  kills every active session immediately.
+- **No `/register` endpoint at all.** Not even with an admin gate.
+  CLI-only is simpler, has no surface to attack, and matches the
+  threat model (one user, ever).
+
 ## Conventions
 
 - A step is "done" when there's a **working demo** described next to it

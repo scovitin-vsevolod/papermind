@@ -19,7 +19,7 @@ interview targeted 2–3 months out (currently May 2026).
 - **Ingestion:** `markitdown` (one library for PDF / DOCX / PPTX / XLSX / MD / HTML / TXT)
 - **Knowledge graph:** Neo4j (Phase 3)
 - **Frontend:** Vite + React 19 + TypeScript + Tailwind 4 (Phase 1.5 / 2)
-- **Infra:** `docker-compose` locally · Fly.io in production (Phase 4)
+- **Infra:** `docker-compose` locally · AWS in production (Phase 4, service TBD)
 
 ## Stack rationale
 
@@ -71,7 +71,7 @@ interview targeted 2–3 months out (currently May 2026).
 - [ ] **Phase 3 — Knowledge graph (2–3 weeks):** Neo4j, entity
   extraction via Claude, graph visualization with `react-force-graph`.
 - [ ] **Phase 4 — Tests, CI/CD, deploy (1–2 weeks):** pytest coverage,
-  GitHub Actions, Fly.io deploy.
+  GitHub Actions, AWS deploy (service TBD).
 
 Each phase ends with a commit and a working demo.
 

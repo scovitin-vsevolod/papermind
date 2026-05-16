@@ -87,9 +87,33 @@ fly secrets set \
 # 3. Deploy. First build pushes ~5 GB of layers — coffee break.
 fly deploy --app "${PM}-backend"
 
-# 4. Smoke test
+# 4. JWT secret for the session cookie. MUST be set in prod — the
+#    default in config.py is intentionally a placeholder.
+fly secrets set JWT_SECRET="$(openssl rand -hex 32)" --app "${PM}-backend"
+
+# 5. Smoke test
 curl https://${PM}-backend.fly.dev/health
 ```
+
+## Create the first user (one-time)
+
+PaperMind has no public signup — login is gated on a user row that
+must exist before anyone can use the app. Create it with the CLI:
+
+```bash
+# Interactive (prompts for email + password):
+fly ssh console --app "${PM}-backend" \
+  --command "uv run python -m app.cli.create_user"
+
+# Or non-interactive (handy for scripts / first deploy):
+fly ssh console --app "${PM}-backend" --command \
+  "PAPERMIND_EMAIL=you@example.com PAPERMIND_PASSWORD='your-strong-pass' \
+   uv run python -m app.cli.create_user --non-interactive"
+```
+
+Re-run any time to add another user. The CLI refuses to overwrite an
+existing email — change the password by deleting and recreating the
+row (`sqlite3 papermind.db "DELETE FROM users WHERE email='…';"`).
 
 ## Frontend
 
@@ -137,8 +161,11 @@ fly ssh console --app "${PM}-backend"
 - **No background workers.** Document ingestion is synchronous inside
   the upload request — fine for single-user use, would need a queue
   (Celery, RQ, Fly Machines) for multi-user.
-- **No auth.** Anyone with the URL can upload and ask. Add an auth
-  proxy (Cloudflare Access, Fly Tokens) before sharing the URL.
+- **Auth is single-tenant by design.** Phase 6 added password login
+  with a server-side CLI as the only user-creation path — see the
+  "Create the first user" section above. No public `/register`, no
+  password reset flow. If you forget your password, SSH in and
+  recreate the row.
 - **No backups.** SQLite + Qdrant + Neo4j volumes survive deploys but
   not data loss. `fly ssh console` + `sqlite3 .backup` is a manual
   start; long-term, schedule snapshot exports somewhere off-platform.

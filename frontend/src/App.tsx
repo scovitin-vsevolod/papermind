@@ -3,39 +3,204 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import {
+  ApiError,
   askQuestion,
   deleteDocument,
   getHealth,
+  getMe,
   listDocuments,
+  login,
+  logout,
   uploadDocument,
   type AskResponse,
   type DocumentRead,
   type HealthResponse,
   type Provider,
+  type UserOut,
 } from "./api";
 import GraphView from "./GraphView";
 
+type AuthState =
+  | { status: "checking" }
+  | { status: "guest" }
+  | { status: "user"; user: UserOut };
+
 export default function App() {
+  const [auth, setAuth] = useState<AuthState>({ status: "checking" });
+
+  // Probe /auth/me once on mount to decide login vs main UI.
+  useEffect(() => {
+    let cancelled = false;
+    getMe()
+      .then((user) => {
+        if (!cancelled) setAuth({ status: "user", user });
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        if (e instanceof ApiError && e.status === 401) {
+          setAuth({ status: "guest" });
+        } else {
+          // Treat unknown errors as "needs login" too — the alternative is
+          // a stuck spinner if the backend is briefly unreachable.
+          setAuth({ status: "guest" });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (auth.status === "checking") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-500">
+        Checking session…
+      </div>
+    );
+  }
+
+  if (auth.status === "guest") {
+    return (
+      <LoginScreen
+        onLogin={(user) => setAuth({ status: "user", user })}
+      />
+    );
+  }
+
+  return (
+    <AuthedApp
+      user={auth.user}
+      onLogout={() => setAuth({ status: "guest" })}
+    />
+  );
+}
+
+function LoginScreen({ onLogin }: { onLogin: (user: UserOut) => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim() || !password) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { user } = await login({ email: email.trim(), password });
+      onLogin(user);
+    } catch (e) {
+      // Show the backend's own message ("invalid email or password",
+      // "account is inactive") — both are safe to surface verbatim.
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-sm space-y-4 rounded border border-slate-200 bg-white p-6 shadow-sm"
+      >
+        <h1 className="text-lg font-semibold tracking-tight">Sign in to PaperMind</h1>
+        <p className="text-xs text-slate-500">
+          Single-tenant app. New users are created on the server via the
+          <code className="mx-1 rounded bg-slate-100 px-1">create_user</code>
+          CLI.
+        </p>
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-700">Email</span>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+            autoFocus
+            required
+            className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+          />
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-700">Password</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            required
+            minLength={8}
+            className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+          />
+        </label>
+        {error && (
+          <p className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+            {error}
+          </p>
+        )}
+        <button
+          type="submit"
+          disabled={busy || !email.trim() || password.length < 8}
+          className="w-full rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-50"
+        >
+          {busy ? "Signing in…" : "Sign in"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function AuthedApp({
+  user,
+  onLogout,
+}: {
+  user: UserOut;
+  onLogout: () => void;
+}) {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [docs, setDocs] = useState<DocumentRead[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // A 401 from any API call means the session evaporated (token expired,
+  // user deleted, secret rotated). Kick the user back to the login screen
+  // instead of showing a stale error.
+  const handleError = useCallback(
+    (e: unknown) => {
+      if (e instanceof ApiError && e.status === 401) {
+        onLogout();
+        return;
+      }
+      setError((e as Error).message);
+    },
+    [onLogout],
+  );
 
   const refreshDocs = useCallback(async () => {
     try {
       setDocs(await listDocuments());
     } catch (e) {
-      setError((e as Error).message);
+      handleError(e);
     }
-  }, []);
+  }, [handleError]);
 
   useEffect(() => {
-    getHealth().then(setHealth).catch((e: Error) => setError(e.message));
+    getHealth().then(setHealth).catch(handleError);
     void refreshDocs();
-  }, [refreshDocs]);
+  }, [handleError, refreshDocs]);
+
+  async function handleLogout() {
+    try {
+      await logout();
+    } catch {
+      // Even if the logout request fails, locally drop the auth state —
+      // worst case the cookie lingers until its expiry.
+    }
+    onLogout();
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      <Header health={health} />
+      <Header health={health} user={user} onLogout={handleLogout} />
       <main className="mx-auto max-w-4xl space-y-8 px-6 py-8">
         {error && (
           <div className="rounded border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
@@ -51,26 +216,45 @@ export default function App() {
         <DocumentsSection
           docs={docs}
           refresh={refreshDocs}
-          onError={setError}
+          onError={handleError}
         />
-        <AskSection docs={docs} onError={setError} />
-        <GraphView docs={docs} onError={setError} />
+        <AskSection docs={docs} onError={handleError} />
+        <GraphView docs={docs} onError={(msg) => handleError(new Error(msg))} />
       </main>
     </div>
   );
 }
 
-function Header({ health }: { health: HealthResponse | null }) {
+function Header({
+  health,
+  user,
+  onLogout,
+}: {
+  health: HealthResponse | null;
+  user: UserOut;
+  onLogout: () => void;
+}) {
   return (
     <header className="border-b border-slate-200 bg-white">
       <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
         <h1 className="text-xl font-semibold tracking-tight">PaperMind</h1>
-        {health && (
-          <div className="flex gap-2 text-xs">
-            <Badge label="LLM" value={health.claude_model} />
-            <Badge label="Embeddings" value={health.embedding_model.split("/").pop()!} />
-          </div>
-        )}
+        <div className="flex items-center gap-3 text-xs">
+          {health && (
+            <div className="flex gap-2">
+              <Badge label="LLM" value={health.claude_model} />
+              <Badge label="Embeddings" value={health.embedding_model.split("/").pop()!} />
+            </div>
+          )}
+          <span className="text-slate-500" title={user.email}>
+            {user.email}
+          </span>
+          <button
+            onClick={onLogout}
+            className="rounded border border-slate-300 px-2 py-1 text-slate-700 hover:bg-slate-50"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
     </header>
   );
@@ -91,7 +275,7 @@ function DocumentsSection({
 }: {
   docs: DocumentRead[];
   refresh: () => Promise<void>;
-  onError: (msg: string) => void;
+  onError: (e: unknown) => void;
 }) {
   const [uploading, setUploading] = useState(false);
 
@@ -101,7 +285,7 @@ function DocumentsSection({
       await uploadDocument(file);
       await refresh();
     } catch (e) {
-      onError((e as Error).message);
+      onError(e);
     } finally {
       setUploading(false);
     }
@@ -112,7 +296,7 @@ function DocumentsSection({
       await deleteDocument(id);
       await refresh();
     } catch (e) {
-      onError((e as Error).message);
+      onError(e);
     }
   }
 
@@ -181,7 +365,7 @@ function AskSection({
   onError,
 }: {
   docs: DocumentRead[];
-  onError: (msg: string) => void;
+  onError: (e: unknown) => void;
 }) {
   const [question, setQuestion] = useState("");
   const [scope, setScope] = useState<"all" | number>("all");
@@ -212,7 +396,9 @@ function AskSection({
     } catch (e) {
       const message = (e as Error).message;
       setState({ status: "error", message });
-      onError(`${provider}: ${message}`);
+      // Bubble up to the global handler so a 401 logs the user out instead
+      // of just being shown in a per-pane error.
+      onError(e);
     }
   }
 

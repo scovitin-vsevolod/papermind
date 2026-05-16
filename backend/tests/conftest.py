@@ -22,8 +22,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.auth_deps import get_current_user
 from app.db import Base, get_db
 from app.main import app
+from app.models import User
 from app.services import claude as claude_service
 from app.services import graph as graph_service
 from app.services import openai_provider as openai_service
@@ -372,12 +374,62 @@ def fake_neo4j() -> Iterator[FakeNeo4jDriver]:
 
 
 @pytest.fixture
+def fake_user(db_session: Session) -> User:
+    """A persisted test user. Inserted into the per-test in-memory DB so
+    foreign-key references and joins behave like the real thing.
+    """
+    user = User(
+        email="test@example.com",
+        password_hash="$2b$12$placeholder.placeholder.placeholder.placeholder.plac",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
 def client(
     db_session: Session,
     fake_claude: FakeClaude,
     fake_openai: FakeOpenAI,
     fake_neo4j: FakeNeo4jDriver,
+    fake_user: User,
 ) -> Iterator[TestClient]:
+    def _override_get_db() -> Iterator[Session]:
+        yield db_session
+
+    def _override_get_current_user() -> User:
+        # Existing tests for /documents, /ask, /graph all assume an
+        # authenticated session; override the auth dependency to return
+        # our test user. Auth-specific tests use `unauthenticated_client`
+        # below instead.
+        return fake_user
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+    qdrant_service.use_client_for_tests(QdrantClient(":memory:"))
+
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def unauthenticated_client(
+    db_session: Session,
+    fake_claude: FakeClaude,
+    fake_openai: FakeOpenAI,
+    fake_neo4j: FakeNeo4jDriver,
+) -> Iterator[TestClient]:
+    """Like `client`, but WITHOUT the auth override.
+
+    Used by tests that exercise the login flow itself or the 401 path on
+    protected endpoints.
+    """
+
     def _override_get_db() -> Iterator[Session]:
         yield db_session
 

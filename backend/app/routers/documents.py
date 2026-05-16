@@ -20,6 +20,7 @@ import logging
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.auth_deps import get_current_user
 from app.db import get_db
 from app.loaders.markitdown_loader import LoaderError, to_markdown
 from app.models import Chunk, Document, DocumentStatus
@@ -32,7 +33,14 @@ from app.services.embeddings import embed
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/documents", tags=["documents"])
+# All routes in this router require an authenticated user. Applying the
+# dependency at the router level (rather than on every function) means
+# protected-by-default — adding a new endpoint can't accidentally skip auth.
+router = APIRouter(
+    prefix="/documents",
+    tags=["documents"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.get("", response_model=list[DocumentRead])

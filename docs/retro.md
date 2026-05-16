@@ -5,6 +5,140 @@ sections — the value is the timestamped trail of what you learned when.
 
 ---
 
+## Phase 6 retro — Closed system: auth without a register page
+
+### Why this exists
+
+The app went live at https://pm.ikornweb.dev/ behind an AWS EC2 box.
+With it on the public internet the previous threat model ("only my
+laptop hits the API") evaporated. I wanted login-gated access without
+a user-facing signup path — this is a personal tool, not a SaaS.
+
+The shape that fell out of that constraint is **server-side CLI-only
+user creation**. There's no `/auth/register`, not even hidden behind
+an admin gate. New users come into existence by SSHing into the box
+and running `uv run python -m app.cli.create_user`. That's it. The
+absence of a public signup endpoint is the access-control policy.
+
+### What got built
+
+- **`services/auth.py`** — bcrypt cost 12 for password hashing, JWT
+  HS256 for session tokens. Verification is wrapped in try/except
+  that turns malformed-hash crashes into `False`, so the login path
+  is never the cause of a 500.
+- **`User` model** + `LoginRequest` / `UserOut` / `LoginResponse`
+  schemas. `is_active` flag so accounts can be soft-disabled without
+  deleting history.
+- **`app/auth_deps.py:get_current_user`** — lives in its own module
+  to avoid an import cycle between `routers/auth.py` (which uses it
+  for `/auth/me`) and the protected routers. Reads cookie first, then
+  `Authorization: Bearer …` — same dependency works for browsers and
+  for curl.
+- **`routers/auth.py`** — `/login` `/logout` `/me`. Login verifies
+  the password even when the user doesn't exist (constant-time-ish
+  email enumeration defence). Cookie attributes: `HttpOnly`,
+  `Secure`, `SameSite=lax`, 30-day max-age.
+- **Router-level protection.** `documents`, `ask`, `graph` declare
+  `dependencies=[Depends(get_current_user)]` on the router itself,
+  not per-endpoint. One line per router; the "opt out of auth" path
+  is now the explicit one.
+- **`backend/app/cli/create_user.py`** — interactive prompts via
+  `getpass`, EmailStr validation, duplicate-email refusal. Also has
+  a `--non-interactive` flag taking `PAPERMIND_EMAIL` /
+  `PAPERMIND_PASSWORD` env vars for CI / Ansible / `docker exec`.
+- **Frontend gate.** `App.tsx` probes `/auth/me` on mount, three-way
+  auth state (`checking | guest | user`), `LoginScreen` for guests,
+  email + Sign out button in the header for authed users. Any 401
+  from a downstream API call kicks back to the login screen.
+- **Tests.** 23 new tests in `tests/test_auth.py`, plus a fixture
+  override pattern that kept all 105 existing tests passing without
+  touching their code.
+
+### Surprises and lessons
+
+**Test-doubles for auth: override the dependency, don't fake the
+token.** The temptation was to mint a real JWT in conftest and stuff
+it into every request's cookies. That's brittle — any change to the
+token shape breaks the test fixtures, not just the auth code. Instead
+I added `app.dependency_overrides[get_current_user]` returning a
+`fake_user` row. The existing 105 tests now exercise the protected
+routers as if logged in, with **zero per-test code changes**. The 23
+auth-specific tests use a separate `unauthenticated_client` fixture
+without the override, so the real cookie/bearer code path is also
+exercised.
+
+This separation is worth being explicit about: most tests don't care
+about auth, so they shouldn't touch it. The handful that do should
+exercise it for real.
+
+**Cookies marked `Secure` don't replay on `http://testserver`.**
+Starlette's `TestClient` talks to a fake `http://testserver` URL.
+httpx (which it wraps) refuses to attach `Secure=True` cookies to a
+non-HTTPS request — which is correct behaviour, but it broke
+`test_me_with_cookie` until I read the cookie value out of the login
+response and reattached it explicitly. The bearer-token test path was
+unaffected; that's a hint to keep both code paths in the test suite,
+because each catches different classes of regression.
+
+**Email enumeration matters less than people think — but the fix is
+cheap.** Verifying the password against a dummy hash when the user
+doesn't exist costs ~250 ms either way, identical to a wrong-password
+response. Doesn't hide that the email format is wrong (422 still tells
+you that), and a determined attacker can side-channel it through other
+means. But it's three lines of code and means /auth/login won't ever
+be the easiest enumeration target on the box.
+
+**The frontend's three-way auth state was worth the wrapper.** First
+draft of `App.tsx` had a single `user: UserOut | null` and rendered
+`LoginScreen` when null. That flashed the login form on every page
+load before `/auth/me` returned — ugly. Adding a `checking` state
+that renders "Checking session…" fixed it. Sounds obvious in
+hindsight, but the pattern "loading vs absent vs present" is the same
+shape as the Phase 2 `AskState` union and the GraphView's
+`{status: "idle" | "loading" | "ok" | "error"}` — once you start
+thinking in unions of states, you stop having two-booleans bugs.
+
+### Decisions I didn't take
+
+- **Refresh tokens / token rotation.** A 30-day JWT is fine for a
+  personal app. The escape hatch (rotate `JWT_SECRET`) is brute but
+  it works.
+- **Server-side session store.** Same reason. Stateless wins for a
+  single-tenant app; Redis adds an operational dependency I don't
+  need.
+- **Argon2.** Bcrypt cost 12 is OWASP-acceptable, has a lighter
+  Python wheel, and the threat model here is "someone gets a copy of
+  papermind.db", not "someone has 10 GPUs and a year". If I were
+  building for an org I'd reach for argon2id.
+- **Rate-limiting the login endpoint.** Worth doing eventually —
+  bcrypt cost 12 already makes brute force expensive (~4 attempts/sec
+  on the CPU), but a global `slowapi` limit on `/auth/login` is
+  obvious and cheap. Parked for now.
+- **2FA / WebAuthn.** Not while I'm the only user. A future "open it
+  up to friends" version would.
+
+### What I'd tell an interviewer about this
+
+Two things, both about the *non-features*:
+
+1. **Why there's no `/register` endpoint.** Because the access-control
+   policy *is* the absence of one. The simplest policy that works is
+   better than the most secure policy you can think of, and CLI-only
+   user creation matches the threat model exactly.
+
+2. **Why the existing test suite didn't need changes.** Using
+   `dependency_overrides` to inject a fake user keeps every old test
+   readable as "what does this endpoint do?", separate from "what
+   does the auth dependency do?". The 23 new auth tests cover the
+   second question without polluting the 105 old ones.
+
+The thing I want to be careful about: don't over-claim that this is
+"production auth". It's *enough* auth for one user on a $9/month VPS,
+which is exactly what's deployed. A real SaaS would need rate
+limiting, refresh tokens, a session store, and audit logs.
+
+---
+
 ## Phase 5 retro — GraphRAG (the graph finally pays rent)
 
 ### Why this exists

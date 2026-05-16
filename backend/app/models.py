@@ -1,10 +1,27 @@
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
+
+
+class User(Base):
+    """A registered account. Users are created via the CLI tool
+    (`backend/app/cli/create_user.py`); there's no public signup endpoint —
+    PaperMind is a single-tenant personal app, not a SaaS.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # bcrypt hashes are 60 ASCII chars; the column is wider so a future
+    # migration to argon2id (~96 chars) doesn't require an ALTER.
+    password_hash: Mapped[str] = mapped_column(String(128))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class DocumentStatus(StrEnum):

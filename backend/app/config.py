@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     neo4j_uri: str = Field(default="bolt://localhost:7687")
     neo4j_user: str = Field(default="neo4j")
     neo4j_password: str = Field(default="papermind-dev")
+    # Secret used to sign session JWTs. Generate a real one for production:
+    #   python3 -c "import secrets; print(secrets.token_urlsafe(64))"
+    # The default below is deliberately recognisable — startup logs a warning
+    # if it's still in use, and any existing tokens become invalid the moment
+    # you rotate the secret.
+    jwt_secret: str = Field(default="dev-only-change-me-in-production")
+    jwt_session_days: int = Field(default=30)
     database_url: str = Field(default="sqlite:///./papermind.db")
     # Embedding backend selection — "sentence-transformers" (local, free,
     # 384 dim) or "voyage" (API, paid, 1024 dim). Different dims → different

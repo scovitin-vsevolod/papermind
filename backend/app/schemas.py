@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class DocumentRead(BaseModel):
@@ -93,3 +93,30 @@ class GraphEdgeOut(BaseModel):
 class GraphResponse(BaseModel):
     nodes: list[GraphNodeOut]
     edges: list[GraphEdgeOut]
+
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=256)
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    created_at: datetime
+
+
+class LoginResponse(BaseModel):
+    """Returned on successful login. The cookie is set in the same response;
+    the body is here so non-browser clients (curl, scripts) can grab the
+    token if they want to use `Authorization: Bearer ...` instead of cookies.
+    """
+
+    user: UserOut
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"

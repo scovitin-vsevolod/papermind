@@ -16,13 +16,18 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.auth_deps import get_current_user
 from app.db import get_db
 from app.models import Query
 from app.schemas import AskRequest, AskResponse, CitationOut, ToolUseOut
 from app.services import claude, graph_rag, openai_provider, qdrant
 from app.services.embeddings import embed
 
-router = APIRouter(prefix="/ask", tags=["ask"])
+router = APIRouter(
+    prefix="/ask",
+    tags=["ask"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.post("", response_model=AskResponse)

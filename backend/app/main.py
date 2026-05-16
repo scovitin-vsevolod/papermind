@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import ask, documents, graph
+from app.routers import ask, auth, documents, graph
 
 app = FastAPI(title="PaperMind", version="0.1.0")
 
@@ -14,6 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(ask.router)
 app.include_router(graph.router)

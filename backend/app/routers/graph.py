@@ -4,12 +4,17 @@ as JSON for the frontend force-directed renderer.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.auth_deps import get_current_user
 from app.schemas import GraphEdgeOut, GraphNodeOut, GraphResponse
 from app.services import graph as graph_service
 
-router = APIRouter(prefix="/graph", tags=["graph"])
+router = APIRouter(
+    prefix="/graph",
+    tags=["graph"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.get("", response_model=GraphResponse)

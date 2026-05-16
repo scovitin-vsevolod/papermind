@@ -32,6 +32,11 @@ Developer interview.
   runs a recall@5 A/B between local MiniLM and voyage-3.
   `backend/scripts/graph_experiment.py` measures the lift from
   graph augmentation on top of a fixed embedding.
+- **Single-tenant auth.** Password login with bcrypt + JWT in an
+  httpOnly cookie. There is no public `/register` endpoint — users
+  are created only by the server-side
+  [`create_user`](backend/app/cli/create_user.py) CLI. See
+  [First user](#first-user) below.
 
 - [`CLAUDE.md`](CLAUDE.md) — stack rationale and assistant context
 - [`ROADMAP.md`](ROADMAP.md) — step-by-step plan with progress checkboxes
@@ -59,10 +64,31 @@ Developer interview.
 # Backend
 cd backend
 uv sync                     # creates .venv, installs deps from pyproject.toml
-cp .env.example .env        # then fill in ANTHROPIC_API_KEY
+cp .env.example .env        # then fill in ANTHROPIC_API_KEY (+ JWT_SECRET in prod)
 ```
 
 Docker is required (used to run Qdrant).
+
+## First user
+
+The UI is gated behind login from the moment the backend boots. Create
+the first account from the project root:
+
+```bash
+cd backend
+uv run python -m app.cli.create_user
+# prompts for email + password (hidden, confirmed, 8+ chars)
+```
+
+Non-interactive (CI / Ansible / `docker exec`):
+
+```bash
+PAPERMIND_EMAIL=you@example.com PAPERMIND_PASSWORD='your-strong-pass' \
+  uv run python -m app.cli.create_user --non-interactive
+```
+
+Re-run any time to add more users. There is intentionally no public
+signup endpoint — that's the access-control policy.
 
 ## Daily run
 
