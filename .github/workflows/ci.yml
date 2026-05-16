@@ -78,3 +78,39 @@ jobs:
         # `npm run build` does `tsc -b && vite build`. tsc catches type
         # errors before bundling so a green CI is a green type check.
         run: npm run build
+
+  # ── Continuous deployment ─────────────────────────────────────────────────
+  # Runs only on direct pushes to main (not on PRs from anyone, including
+  # fork PRs — Secrets aren't even available there). Waits for both backend
+  # and frontend jobs to finish green; if either is red, this job is
+  # skipped and the prod box stays on the previous commit.
+  deploy:
+    name: deploy to EC2
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      # SSH into the EC2 box and run scripts/deploy.sh, which lives in
+      # the repo and is checked out by `git fetch` inside the script
+      # itself. We do NOT actions/checkout here — the work happens on
+      # the server, on the freshly-pulled tree.
+      #
+      # `appleboy/ssh-action` pinned at a recent tagged release. Once
+      # this is in steady state, swap @v1.2.0 for a commit SHA to lock
+      # against the (small) supply-chain risk of a tag being moved.
+      - name: SSH into EC2 and run deploy.sh
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          # script_stop=true → if any line in the remote script exits
+          # non-zero, the action fails. Together with `set -euo pipefail`
+          # inside deploy.sh, this gives us no-silent-failure deploys.
+          script_stop: true
+          # 10 min cap matches the timeout-minutes above with buffer.
+          command_timeout: 10m
+          script: |
+            cd /var/www/pm && bash scripts/deploy.sh
