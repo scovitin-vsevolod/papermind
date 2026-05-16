@@ -15,6 +15,9 @@ def test_provider_openai_routes_to_openai_client(
     client: TestClient, fake_claude: FakeClaude, fake_openai: FakeOpenAI
 ):
     _upload(client, "doc.txt", b"PaperMind ingests documents.")
+    # Drop extraction calls from upload — this test asserts /ask routes
+    # past Claude entirely when provider=openai.
+    fake_claude.calls.clear()
     fake_openai.response_text = "PaperMind ingests documents [chunk:1]."
 
     r = client.post(
@@ -43,6 +46,7 @@ def test_provider_claude_is_default_and_does_not_call_openai(
     client: TestClient, fake_claude: FakeClaude, fake_openai: FakeOpenAI
 ):
     _upload(client, "doc.txt", b"some content")
+    fake_claude.calls.clear()  # ignore extraction calls during upload
     fake_claude.response_text = "claude answer [chunk:1]"
 
     client.post("/ask", json={"question": "q?"})

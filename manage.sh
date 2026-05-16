@@ -22,6 +22,8 @@ cd "$(dirname "$0")"
 FRONTEND_PORT=5209
 BACKEND_PORT=8109
 QDRANT_PORT=6333
+NEO4J_HTTP_PORT=7474
+NEO4J_BOLT_PORT=7687
 
 kill_port() {
   local port="$1"
@@ -95,15 +97,22 @@ case "${1:-}" in
 
   status)
     echo "── Listening ports ──"
-    status_port "$FRONTEND_PORT" "frontend"
-    status_port "$BACKEND_PORT"  "backend"
-    status_port "$QDRANT_PORT"   "qdrant"
+    status_port "$FRONTEND_PORT"    "frontend"
+    status_port "$BACKEND_PORT"     "backend"
+    status_port "$QDRANT_PORT"      "qdrant"
+    status_port "$NEO4J_HTTP_PORT"  "neo4j-http"
+    status_port "$NEO4J_BOLT_PORT"  "neo4j-bolt"
     echo
-    echo "── Qdrant readyz ──"
+    echo "── Health probes ──"
     if curl -fs --max-time 2 "http://localhost:${QDRANT_PORT}/readyz" >/dev/null 2>&1; then
-      echo "  ✓ ok"
+      echo "  ✓ Qdrant /readyz ok"
     else
-      echo "  ✗ not responding"
+      echo "  ✗ Qdrant not responding"
+    fi
+    if curl -fs --max-time 2 "http://localhost:${NEO4J_HTTP_PORT}/" >/dev/null 2>&1; then
+      echo "  ✓ Neo4j http ok"
+    else
+      echo "  ✗ Neo4j not responding"
     fi
     ;;
 

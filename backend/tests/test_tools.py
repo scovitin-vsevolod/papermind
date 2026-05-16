@@ -84,6 +84,7 @@ def test_use_tools_false_does_not_send_tools_to_claude(
     client: TestClient, fake_claude: FakeClaude
 ):
     _upload(client, "x.txt", b"some context")
+    fake_claude.calls.clear()  # ignore extraction calls during upload
     client.post("/ask", json={"question": "q?"})  # default use_tools=False
     call = fake_claude.calls[0]
     assert "tools" not in call
@@ -93,6 +94,7 @@ def test_use_tools_true_sends_full_tool_list(
     client: TestClient, fake_claude: FakeClaude
 ):
     _upload(client, "x.txt", b"some context")
+    fake_claude.calls.clear()  # ignore extraction calls during upload
     client.post("/ask", json={"question": "q?", "use_tools": True})
     call = fake_claude.calls[0]
     assert "tools" in call
@@ -104,6 +106,9 @@ def test_calculator_loop_executes_and_feeds_result_back(
     client: TestClient, fake_claude: FakeClaude
 ):
     _upload(client, "x.txt", b"context about math")
+    # The upload also calls Claude (entity extraction per chunk). Reset
+    # so the scripted responses below are consumed only by /ask.
+    fake_claude.calls.clear()
 
     # Claude's first response: "I need the calculator" + tool_use(2+2)
     # Claude's second response (after we feed back "4"): final text answer.
@@ -142,6 +147,7 @@ def test_server_tool_use_is_recorded_without_extra_round_trip(
     client: TestClient, fake_claude: FakeClaude
 ):
     _upload(client, "x.txt", b"context")
+    fake_claude.calls.clear()  # ignore extraction calls during upload
 
     # Claude's single response contains a server_tool_use block (web_search)
     # alongside the final text. We don't run anything client-side; we just

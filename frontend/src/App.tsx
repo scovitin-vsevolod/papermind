@@ -13,6 +13,7 @@ import {
   type HealthResponse,
   type Provider,
 } from "./api";
+import GraphView from "./GraphView";
 
 export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -53,6 +54,7 @@ export default function App() {
           onError={setError}
         />
         <AskSection docs={docs} onError={setError} />
+        <GraphView docs={docs} onError={setError} />
       </main>
     </div>
   );

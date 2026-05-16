@@ -13,6 +13,7 @@ dependencies = [
     "anthropic>=0.40",
     "openai>=1.55",
     "qdrant-client>=1.12",
+    "neo4j>=5.20",
     "sentence-transformers>=3.3",
     "voyageai>=0.3",
     "markitdown[pdf,docx,pptx,xlsx]>=0.0.1a3",

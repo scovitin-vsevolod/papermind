@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
@@ -22,9 +24,13 @@ from app.db import get_db
 from app.loaders.markitdown_loader import LoaderError, to_markdown
 from app.models import Chunk, Document, DocumentStatus
 from app.schemas import DocumentRead
+from app.services import extraction as extraction_service
+from app.services import graph as graph_service
 from app.services import qdrant as qdrant_service
 from app.services.chunker import chunk_text
 from app.services.embeddings import embed
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -109,6 +115,22 @@ def upload_document(
                 for i, row in enumerate(chunk_rows)
             ]
         )
+
+        # Knowledge-graph extraction is best-effort: each chunk gets its
+        # own Claude call, and we don't want a Neo4j outage (or one bad
+        # chunk) to fail the whole ingest. Log + swallow per-chunk
+        # failures; the document still becomes READY.
+        try:
+            graph_service.ensure_schema()
+            for row in chunk_rows:
+                try:
+                    result = extraction_service.extract(row.text)
+                except Exception as exc:  # noqa: BLE001 — wide on purpose
+                    log.warning("extraction failed for chunk %s: %s", row.id, exc)
+                    continue
+                graph_service.write_extraction(doc.id, result)
+        except Exception as exc:  # noqa: BLE001 — Neo4j whole-graph errors
+            log.warning("graph build skipped for document %s: %s", doc.id, exc)
     except Exception as exc:
         db.rollback()
         # Reattach a fresh row reference so we can persist the error state
@@ -137,5 +159,11 @@ def delete_document(document_id: int, db: Session = Depends(get_db)) -> None:
     if doc is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
     qdrant_service.delete_by_document(document_id)
+    # Best-effort graph cleanup — same reasoning as the ingest hook:
+    # a Neo4j outage shouldn't block deleting from the primary stores.
+    try:
+        graph_service.delete_for_document(document_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("graph cleanup skipped for document %s: %s", document_id, exc)
     db.delete(doc)  # ORM cascade removes related Chunk rows
     db.commit()

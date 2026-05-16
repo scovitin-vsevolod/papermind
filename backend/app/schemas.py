@@ -62,3 +62,21 @@ class AskResponse(BaseModel):
     model: str
     citations: list[CitationOut]
     tool_uses: list[ToolUseOut] = Field(default_factory=list)
+
+
+class GraphNodeOut(BaseModel):
+    name: str
+    type: str
+    document_ids: list[int]
+
+
+class GraphEdgeOut(BaseModel):
+    head: str
+    label: str
+    tail: str
+    document_ids: list[int]
+
+
+class GraphResponse(BaseModel):
+    nodes: list[GraphNodeOut]
+    edges: list[GraphEdgeOut]

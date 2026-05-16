@@ -26,10 +26,10 @@ fi
 
 # ── Qdrant ────────────────────────────────────────────────────────────────────
 
-echo "▶ Starting Qdrant…"
+echo "▶ Starting infra (Qdrant + Neo4j)…"
 (cd infra && docker compose up -d) > /dev/null
 
-echo "▶ Waiting for Qdrant to become healthy…"
+echo "▶ Waiting for Qdrant /readyz…"
 for _ in $(seq 1 30); do
   if curl -fs --max-time 2 http://localhost:6333/readyz > /dev/null 2>&1; then
     echo "  ✓ Qdrant is up"
@@ -40,6 +40,23 @@ done
 if ! curl -fs --max-time 2 http://localhost:6333/readyz > /dev/null 2>&1; then
   echo "  ✗ Qdrant didn't come up in 30s. Inspect: cd infra && docker compose logs qdrant"
   exit 1
+fi
+
+# Neo4j cold-starts slower than Qdrant — give it 60s. The Bolt port (7687)
+# opens before the auth subsystem is ready; the HTTP endpoint flips to
+# 200 once the database is fully usable, so we probe that.
+echo "▶ Waiting for Neo4j (cold start can take 30-60s)…"
+for _ in $(seq 1 60); do
+  if curl -fs --max-time 2 http://localhost:7474/ > /dev/null 2>&1; then
+    echo "  ✓ Neo4j is up — browser at http://localhost:7474"
+    break
+  fi
+  sleep 1
+done
+if ! curl -fs --max-time 2 http://localhost:7474/ > /dev/null 2>&1; then
+  echo "  ⚠ Neo4j didn't open HTTP in 60s. Graph endpoints will fail until it does."
+  echo "    Inspect:  cd infra && docker compose logs neo4j"
+  # Don't bail — backend/frontend still usable for non-graph features.
 fi
 
 # ── DB bootstrap ──────────────────────────────────────────────────────────────
@@ -122,6 +139,8 @@ cat <<EOF
               http://localhost:8109/health
   Qdrant:     http://localhost:6333
               http://localhost:6333/dashboard  (UI)
+  Neo4j:      http://localhost:7474 (browser; user=neo4j, pw=papermind-dev)
+              bolt://localhost:7687
 ─────────────────────────────────────────────────────
 
   Ctrl+C to stop dev servers (Qdrant stays up).

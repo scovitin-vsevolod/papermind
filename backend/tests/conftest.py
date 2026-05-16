@@ -25,6 +25,7 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base, get_db
 from app.main import app
 from app.services import claude as claude_service
+from app.services import graph as graph_service
 from app.services import openai_provider as openai_service
 from app.services import qdrant as qdrant_service
 
@@ -135,6 +136,133 @@ class FakeOpenAI:
         )
 
 
+# ── Fake Neo4j ───────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _FakeNeo4jResult:
+    """Mimics the result of ``session.run(cypher, **params)``.
+
+    The real driver returns an object with ``.data()`` for list-of-dicts
+    and is iterable. Tests for the writer don't read results back; only
+    the reader needs ``.data()``, which we synthesise from the in-memory
+    graph kept on the parent FakeNeo4jDriver.
+    """
+
+    rows: list[dict[str, Any]] = field(default_factory=list)
+
+    def data(self) -> list[dict[str, Any]]:
+        return self.rows
+
+
+@dataclass
+class _FakeNeo4jSession:
+    driver: FakeNeo4jDriver
+
+    def __enter__(self) -> _FakeNeo4jSession:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+    def run(self, cypher: str, **params: Any) -> _FakeNeo4jResult:
+        self.driver.queries.append((cypher, dict(params)))
+        # Tiny built-in interpreter for the handful of queries we actually
+        # need to round-trip in tests. Not real Cypher — just enough so the
+        # extraction → graph → /graph flow is exercisable without Neo4j.
+        cypher_lower = cypher.lower()
+        if cypher_lower.startswith("create constraint"):
+            return _FakeNeo4jResult()
+        if "merge (e:entity" in cypher_lower:
+            name = params["name"]
+            existing = self.driver.entities.get(name)
+            doc_id = params["doc_id"]
+            if existing is None:
+                self.driver.entities[name] = {
+                    "name": name,
+                    "type": params["type"],
+                    "document_ids": [doc_id],
+                }
+            else:
+                if doc_id not in existing["document_ids"]:
+                    existing["document_ids"].append(doc_id)
+            return _FakeNeo4jResult()
+        if "merge (h)-[r:relates" in cypher_lower:
+            key = (params["head"], params["label"], params["tail"])
+            doc_id = params["doc_id"]
+            existing = self.driver.relations.get(key)
+            if existing is None:
+                self.driver.relations[key] = {
+                    "head": params["head"],
+                    "label": params["label"],
+                    "tail": params["tail"],
+                    "document_ids": [doc_id],
+                }
+            else:
+                if doc_id not in existing["document_ids"]:
+                    existing["document_ids"].append(doc_id)
+            return _FakeNeo4jResult()
+        if (
+            "match (e:entity)" in cypher_lower
+            and "where" in cypher_lower
+            and "return" in cypher_lower
+        ):
+            doc_id = params["doc_id"]
+            return _FakeNeo4jResult(
+                rows=[
+                    e for e in self.driver.entities.values()
+                    if doc_id in e["document_ids"]
+                ]
+            )
+        if "match (e:entity)" in cypher_lower and "return" in cypher_lower:
+            return _FakeNeo4jResult(rows=list(self.driver.entities.values()))
+        if "match (h:entity)-[r:relates]->(t:entity)" in cypher_lower and "where" in cypher_lower:
+            doc_id = params["doc_id"]
+            head_names = {n for n, e in self.driver.entities.items() if doc_id in e["document_ids"]}
+            return _FakeNeo4jResult(
+                rows=[
+                    r
+                    for r in self.driver.relations.values()
+                    if r["head"] in head_names and r["tail"] in head_names
+                ]
+            )
+        if "match (h:entity)-[r:relates]->(t:entity)" in cypher_lower:
+            return _FakeNeo4jResult(rows=list(self.driver.relations.values()))
+        if "delete r" in cypher_lower:
+            doc_id = params["doc_id"]
+            for key in list(self.driver.relations.keys()):
+                r = self.driver.relations[key]
+                r["document_ids"] = [d for d in r["document_ids"] if d != doc_id]
+                if not r["document_ids"]:
+                    del self.driver.relations[key]
+            return _FakeNeo4jResult()
+        if "detach delete e" in cypher_lower:
+            doc_id = params["doc_id"]
+            for name in list(self.driver.entities.keys()):
+                e = self.driver.entities[name]
+                e["document_ids"] = [d for d in e["document_ids"] if d != doc_id]
+                if not e["document_ids"]:
+                    del self.driver.entities[name]
+            return _FakeNeo4jResult()
+        return _FakeNeo4jResult()
+
+
+@dataclass
+class FakeNeo4jDriver:
+    """Test double for ``neo4j.Driver``. Implements the slice we use.
+
+    Backed by two dicts that simulate Neo4j storage — enough to verify the
+    extraction → write → read cycle without a running container.
+    """
+
+    entities: dict[str, dict[str, Any]] = field(default_factory=dict)
+    relations: dict[tuple[str, str, str], dict[str, Any]] = field(default_factory=dict)
+    queries: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+
+    def session(self) -> _FakeNeo4jSession:
+        return _FakeNeo4jSession(driver=self)
+
+
 def make_tool_use_message(
     tool_use_id: str,
     tool_name: str,
@@ -203,10 +331,28 @@ def fake_openai() -> Iterator[FakeOpenAI]:
 
 
 @pytest.fixture
+def fake_neo4j() -> Iterator[FakeNeo4jDriver]:
+    """In-memory Neo4j double for graph tests.
+
+    Every test gets a fresh instance so the entity/relation dicts don't
+    leak between cases. The fake also reverts to a fresh empty instance
+    on teardown so a test that doesn't request it can't reach real Neo4j.
+    """
+
+    fake = FakeNeo4jDriver()
+    graph_service.use_driver_for_tests(fake)
+    try:
+        yield fake
+    finally:
+        graph_service.use_driver_for_tests(FakeNeo4jDriver())
+
+
+@pytest.fixture
 def client(
     db_session: Session,
     fake_claude: FakeClaude,
     fake_openai: FakeOpenAI,
+    fake_neo4j: FakeNeo4jDriver,
 ) -> Iterator[TestClient]:
     def _override_get_db() -> Iterator[Session]:
         yield db_session

@@ -170,23 +170,39 @@ same query.
 Goal: extract entities and relations from uploaded docs into Neo4j,
 visualize them as a force-directed graph.
 
-- [ ] **3.1 Neo4j compose service.** Add Neo4j to `docker-compose.yml`,
-  add `NEO4J_URL` / auth env vars, wire health-check into `dev.sh`.
-  *Demo: Neo4j Browser at :7474 shows an empty graph.*
-- [ ] **3.2 Entity extraction prompt.** Claude with structured output
-  (JSON tool) — given a chunk, return entities + relations. Iterate
-  on the prompt until results are usable. *Demo: feed a sample
-  chunk, get clean JSON.*
-- [ ] **3.3 Graph builder service.** `services/graph.py`: take
-  extracted entities + relations, MERGE into Neo4j (de-duplicate by
-  canonical name). Run during ingestion. *Demo: upload a doc, see
-  nodes/edges appear in Neo4j Browser.*
-- [ ] **3.4 Graph API.** `GET /graph?document_id=…` returns nodes +
-  edges as JSON for the frontend. *Demo: hit the endpoint, get a
-  graph JSON.*
-- [ ] **3.5 Graph UI.** New tab in the frontend using
-  `react-force-graph`. Hover a node → see source chunks. *Demo:
-  click-around graph rendering of an uploaded doc.*
+- [x] **3.1 Neo4j compose service.** `neo4j:5.24-community` added to
+  `infra/docker-compose.yml` with named volumes and tuned heap/page
+  cache. `scripts/dev.sh` waits up to 60s for the HTTP browser (cold
+  start is slow) but doesn't bail — non-graph endpoints stay usable if
+  Neo4j is down. `manage.sh status` probes both 7474 (HTTP) and 7687
+  (Bolt). `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` in settings.
+- [x] **3.2 Entity extraction prompt.** `services/extraction.py`: Claude
+  with `output_config.format` JSON-schema mode — entity-type enum
+  constrained to 8 categories, schema enforces both arrays and
+  required fields. Defends in depth: drops entities with unknown
+  types, drops relations whose endpoints aren't in the entity list,
+  returns empty result on JSON-decode failure (don't crash ingestion).
+- [x] **3.3 Graph builder service.** `services/graph.py`: `MERGE`
+  Cypher with uniqueness constraint on `Entity.name` (set on first
+  `ensure_schema()`). Both entities and edges accumulate
+  `document_ids` so re-ingesting the same doc doesn't duplicate, and
+  `delete_for_document` removes the doc's contribution — dropping
+  entities/edges that become orphans. Hooked into the upload pipeline
+  as best-effort: per-chunk failures are logged and skipped, and a
+  Neo4j outage doesn't fail the whole upload. 8 graph + 6 extraction
+  tests use `FakeNeo4jDriver` (small in-memory Cypher interpreter).
+- [x] **3.4 Graph API.** `GET /graph` returns nodes + edges as JSON;
+  optional `?document_id=N` query filters to a subgraph. Returns 503
+  with the underlying exception class + message when Neo4j is
+  unreachable so the frontend can fall back gracefully. 4 router tests
+  cover full graph, document filter, empty state, and the 503 path.
+- [x] **3.5 Graph UI.** `react-force-graph-2d` in `frontend/src/GraphView.tsx`
+  as a third section under Documents and Ask. Per-type colour legend
+  (8 entity types, same enum as the backend), scope selector
+  (all-docs / per-doc), hover tooltip with type and document
+  membership. `ResizeObserver` adjusts canvas width to the container.
+  Empty state explains how to populate the graph (upload a doc with
+  named entities).
 
 ---
 

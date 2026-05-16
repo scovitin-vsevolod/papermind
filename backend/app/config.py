@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4o")
     qdrant_url: str = Field(default="http://localhost:6333")
     qdrant_collection: str = Field(default="papermind")
+    neo4j_uri: str = Field(default="bolt://localhost:7687")
+    neo4j_user: str = Field(default="neo4j")
+    neo4j_password: str = Field(default="papermind-dev")
     database_url: str = Field(default="sqlite:///./papermind.db")
     # Embedding backend selection — "sentence-transformers" (local, free,
     # 384 dim) or "voyage" (API, paid, 1024 dim). Different dims → different

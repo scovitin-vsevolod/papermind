@@ -9,5 +9,30 @@ services:
       - qdrant_storage:/qdrant/storage
     restart: unless-stopped
 
+  neo4j:
+    # Community edition is enough for a single-node knowledge graph.
+    # 5.x line; pinned to avoid surprise major-version jumps.
+    image: neo4j:5.24-community
+    container_name: papermind-neo4j
+    ports:
+      - "7474:7474"  # HTTP browser (visit http://localhost:7474 to query)
+      - "7687:7687"  # Bolt — what the Python driver speaks
+    environment:
+      # Default user is "neo4j". Password set on first boot, then enforced.
+      # Override in .env if you want something less obvious — same value
+      # must match NEO4J_PASSWORD on the backend.
+      NEO4J_AUTH: neo4j/papermind-dev
+      # Bigger heap so larger graphs don't blow up; "page cache" is what
+      # Neo4j uses for fast graph traversal.
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1g
+      NEO4J_server_memory_pagecache_size: 512m
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    restart: unless-stopped
+
 volumes:
   qdrant_storage:
+  neo4j_data:
+  neo4j_logs:

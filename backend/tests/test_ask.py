@@ -47,6 +47,9 @@ def test_ask_sends_correct_prompt_to_claude(
     client: TestClient, fake_claude: FakeClaude
 ):
     _upload(client, "ctx.txt", b"Reference fact about cats.")
+    # Upload triggers one extraction call per chunk — those aren't what
+    # this test is about, drop them so we can assert on /ask shape alone.
+    fake_claude.calls.clear()
     fake_claude.response_text = "Some answer [chunk:1]"
 
     client.post("/ask", json={"question": "Tell me about cats"})

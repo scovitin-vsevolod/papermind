@@ -103,3 +103,26 @@ export async function askQuestion(req: AskRequest): Promise<AskResponse> {
     }),
   );
 }
+
+export interface GraphNode {
+  name: string;
+  type: string;
+  document_ids: number[];
+}
+
+export interface GraphEdge {
+  head: string;
+  label: string;
+  tail: string;
+  document_ids: number[];
+}
+
+export interface GraphResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export async function getGraph(documentId: number | null = null): Promise<GraphResponse> {
+  const qs = documentId !== null ? `?document_id=${documentId}` : "";
+  return handle(await fetch(`${API_URL}/graph${qs}`));
+}
