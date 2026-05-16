@@ -11,6 +11,7 @@ import {
   type AskResponse,
   type DocumentRead,
   type HealthResponse,
+  type Provider,
 } from "./api";
 
 export default function App() {
@@ -167,6 +168,12 @@ function DocumentsSection({
   );
 }
 
+type AskState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ok"; response: AskResponse }
+  | { status: "error"; message: string };
+
 function AskSection({
   docs,
   onError,
@@ -176,50 +183,94 @@ function AskSection({
 }) {
   const [question, setQuestion] = useState("");
   const [scope, setScope] = useState<"all" | number>("all");
-  const [asking, setAsking] = useState(false);
-  const [result, setResult] = useState<AskResponse | null>(null);
+  const [compare, setCompare] = useState(false);
+  const [useTools, setUseTools] = useState(false);
 
-  async function handleAsk() {
-    if (!question.trim()) return;
-    setAsking(true);
-    setResult(null);
+  // Two independent slots so each provider's pane updates as soon as its
+  // own request comes back (no waiting for the slower one).
+  const [claudeState, setClaudeState] = useState<AskState>({ status: "idle" });
+  const [openaiState, setOpenaiState] = useState<AskState>({ status: "idle" });
+
+  async function runOne(
+    provider: Provider,
+    setState: (s: AskState) => void,
+  ): Promise<void> {
+    setState({ status: "loading" });
     try {
       const response = await askQuestion({
         question,
         top_k: 5,
         document_id: scope === "all" ? null : scope,
+        provider,
+        use_tools: provider === "claude" ? useTools : false,
       });
-      setResult(response);
+      setState({ status: "ok", response });
     } catch (e) {
-      onError((e as Error).message);
-    } finally {
-      setAsking(false);
+      const message = (e as Error).message;
+      setState({ status: "error", message });
+      onError(`${provider}: ${message}`);
     }
   }
+
+  async function handleAsk() {
+    if (!question.trim()) return;
+    setClaudeState({ status: "idle" });
+    setOpenaiState({ status: "idle" });
+    if (compare) {
+      // Fire both in parallel — each pane fills in as its request finishes.
+      void Promise.all([
+        runOne("claude", setClaudeState),
+        runOne("openai", setOpenaiState),
+      ]);
+    } else {
+      void runOne("claude", setClaudeState);
+    }
+  }
+
+  const anyBusy =
+    claudeState.status === "loading" || openaiState.status === "loading";
 
   return (
     <section className="space-y-4">
       <h2 className="text-lg font-medium">Ask</h2>
       <div className="space-y-3 rounded border border-slate-200 bg-white p-4">
-        <label className="block text-sm">
-          Scope:{" "}
-          <select
-            value={scope}
-            onChange={(e) =>
-              setScope(e.target.value === "all" ? "all" : Number(e.target.value))
-            }
-            className="ml-2 rounded border border-slate-300 px-2 py-1"
-          >
-            <option value="all">All documents</option>
-            {docs
-              .filter((d) => d.status === "ready")
-              .map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.filename}
-                </option>
-              ))}
-          </select>
-        </label>
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          <label>
+            Scope:{" "}
+            <select
+              value={scope}
+              onChange={(e) =>
+                setScope(e.target.value === "all" ? "all" : Number(e.target.value))
+              }
+              className="ml-2 rounded border border-slate-300 px-2 py-1"
+            >
+              <option value="all">All documents</option>
+              {docs
+                .filter((d) => d.status === "ready")
+                .map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.filename}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1">
+            <input
+              type="checkbox"
+              checked={compare}
+              onChange={(e) => setCompare(e.target.checked)}
+            />
+            Compare Claude vs GPT-4
+          </label>
+          <label className="flex items-center gap-1" title="Claude-only; GPT-4 pane ignores this">
+            <input
+              type="checkbox"
+              checked={useTools}
+              onChange={(e) => setUseTools(e.target.checked)}
+            />
+            Enable tools (web_search · web_fetch · calculator)
+          </label>
+        </div>
         <textarea
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
@@ -229,57 +280,100 @@ function AskSection({
         />
         <button
           onClick={handleAsk}
-          disabled={asking || !question.trim()}
+          disabled={anyBusy || !question.trim()}
           className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-50"
         >
-          {asking ? "Asking…" : "Ask"}
+          {anyBusy ? "Asking…" : compare ? "Ask both" : "Ask"}
         </button>
       </div>
 
-      {result && (
-        <div className="space-y-4 rounded border border-slate-200 bg-white p-4">
-          <div>
-            <h3 className="mb-2 text-sm font-medium text-slate-500">
-              Answer · {result.model}
-            </h3>
-            {/* Claude responds in markdown — render it as such. `prose` gives
-                sensible defaults for headings/lists/code; `max-w-none` opts
-                out of the typography plugin's default 65ch line cap. */}
-            <div className="prose prose-slate prose-sm max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {result.answer}
-              </ReactMarkdown>
-            </div>
-          </div>
-          {result.citations.length > 0 && (
-            <div>
-              <h3 className="mb-2 text-sm font-medium text-slate-500">
-                Citations ({result.citations.length})
-              </h3>
-              <ul className="space-y-2">
-                {result.citations.map((c) => (
-                  <li
-                    key={c.chunk_id}
-                    className="rounded bg-slate-50 px-3 py-2 text-sm"
-                  >
-                    <div className="mb-1 font-mono text-xs text-slate-500">
-                      [chunk:{c.chunk_id}] · doc {c.document_id} · pos {c.position}
-                    </div>
-                    {/* Chunks are extracted from markdown source docs, so
-                        rendering them as markdown preserves headings/lists/
-                        code blocks from the original. */}
-                    <div className="prose prose-slate prose-sm max-w-none text-slate-700">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {c.text}
-                      </ReactMarkdown>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+      {compare ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          <ResultPane title="Claude" state={claudeState} />
+          <ResultPane title="GPT-4" state={openaiState} />
         </div>
+      ) : (
+        claudeState.status !== "idle" && (
+          <ResultPane title="Claude" state={claudeState} />
+        )
       )}
     </section>
+  );
+}
+
+function ResultPane({ title, state }: { title: string; state: AskState }) {
+  return (
+    <div className="space-y-4 rounded border border-slate-200 bg-white p-4">
+      <h3 className="text-sm font-medium text-slate-500">{title}</h3>
+      {state.status === "idle" && (
+        <p className="text-sm text-slate-400">No response yet.</p>
+      )}
+      {state.status === "loading" && (
+        <p className="text-sm text-slate-500">Asking…</p>
+      )}
+      {state.status === "error" && (
+        <p className="text-sm text-red-600">{state.message}</p>
+      )}
+      {state.status === "ok" && <ResultBody response={state.response} />}
+    </div>
+  );
+}
+
+function ResultBody({ response }: { response: AskResponse }) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="mb-2 font-mono text-xs text-slate-500">
+          {response.model}
+        </div>
+        <div className="prose prose-slate prose-sm max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {response.answer}
+          </ReactMarkdown>
+        </div>
+      </div>
+      {response.tool_uses.length > 0 && (
+        <div>
+          <h4 className="mb-1 text-xs font-medium uppercase text-slate-500">
+            Tool calls ({response.tool_uses.length})
+          </h4>
+          <ul className="space-y-1 text-xs">
+            {response.tool_uses.map((t, i) => (
+              <li key={i} className="rounded bg-amber-50 px-2 py-1">
+                <span className="font-mono text-amber-900">{t.name}</span>
+                <span className="ml-2 text-slate-600">
+                  {JSON.stringify(t.input)}
+                </span>
+                <span className="ml-2 text-slate-500">→ {t.result}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {response.citations.length > 0 && (
+        <div>
+          <h4 className="mb-1 text-xs font-medium uppercase text-slate-500">
+            Citations ({response.citations.length})
+          </h4>
+          <ul className="space-y-2">
+            {response.citations.map((c) => (
+              <li
+                key={c.chunk_id}
+                className="rounded bg-slate-50 px-3 py-2 text-sm"
+              >
+                <div className="mb-1 font-mono text-xs text-slate-500">
+                  [chunk:{c.chunk_id}] · doc {c.document_id} · pos {c.position}
+                </div>
+                <div className="prose prose-slate prose-sm max-w-none text-slate-700">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {c.text}
+                  </ReactMarkdown>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }

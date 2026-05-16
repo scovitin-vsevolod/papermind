@@ -32,7 +32,20 @@ import numpy as np
 from qdrant_client import QdrantClient, models
 
 from app.config import settings
-from app.services.embeddings import embedding_dim
+from app.services.embeddings import current_backend, embedding_dim
+
+
+def collection_name_for_backend(backend: str | None = None) -> str:
+    """Build the collection name from the project base + a backend suffix.
+
+    Different embedding backends have different dimensions (384 for the
+    local model, 1024 for voyage-3) so they MUST live in different Qdrant
+    collections. Encoding the backend in the name keeps both available
+    simultaneously, which is what the retrieval experiment needs.
+    """
+    name = backend or current_backend()
+    suffix = "minilm" if name == "sentence-transformers" else name
+    return f"{settings.qdrant_collection}_{suffix}"
 
 
 @dataclass(frozen=True)
@@ -69,13 +82,16 @@ def use_client_for_tests(client: QdrantClient) -> None:
     _CLIENT = client
 
 
-def ensure_collection(dim: int | None = None) -> None:
-    """Create the collection if it doesn't exist. Idempotent.
+def ensure_collection(
+    dim: int | None = None, *, backend: str | None = None
+) -> None:
+    """Create the per-backend collection if it doesn't exist. Idempotent.
 
     ``dim`` lets tests pin the dimension without triggering a real
-    embedding-model load. In production callers pass nothing.
+    embedding-model load. ``backend`` overrides the active backend (used
+    by the retrieval experiment which writes to BOTH collections).
     """
-    name = settings.qdrant_collection
+    name = collection_name_for_backend(backend)
     client = _client()
     if client.collection_exists(name):
         return
@@ -88,7 +104,7 @@ def ensure_collection(dim: int | None = None) -> None:
     )
 
 
-def upsert_chunks(items: list[UpsertItem]) -> None:
+def upsert_chunks(items: list[UpsertItem], *, backend: str | None = None) -> None:
     if not items:
         return
     points = [
@@ -103,18 +119,20 @@ def upsert_chunks(items: list[UpsertItem]) -> None:
         )
         for item in items
     ]
-    _client().upsert(collection_name=settings.qdrant_collection, points=points)
+    _client().upsert(collection_name=collection_name_for_backend(backend), points=points)
 
 
 def search(
     query_vector: np.ndarray,
     top_k: int = 5,
     document_id: int | None = None,
+    *,
+    backend: str | None = None,
 ) -> list[SearchHit]:
     """Find ``top_k`` most similar chunks, optionally scoped to one document."""
     flt = _document_filter(document_id) if document_id is not None else None
     response = _client().query_points(
-        collection_name=settings.qdrant_collection,
+        collection_name=collection_name_for_backend(backend),
         query=query_vector.tolist(),
         query_filter=flt,
         limit=top_k,
@@ -132,10 +150,10 @@ def search(
     ]
 
 
-def delete_by_document(document_id: int) -> None:
+def delete_by_document(document_id: int, *, backend: str | None = None) -> None:
     """Remove all points belonging to a document. No-op if none match."""
     _client().delete(
-        collection_name=settings.qdrant_collection,
+        collection_name=collection_name_for_backend(backend),
         points_selector=models.FilterSelector(filter=_document_filter(document_id)),
     )
 

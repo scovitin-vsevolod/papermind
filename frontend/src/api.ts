@@ -40,12 +40,23 @@ export interface AskResponse {
   answer: string;
   model: string;
   citations: CitationOut[];
+  tool_uses: ToolUseOut[];
 }
+
+export type Provider = "claude" | "openai";
 
 export interface AskRequest {
   question: string;
   top_k?: number;
   document_id?: number | null;
+  provider?: Provider;
+  use_tools?: boolean;
+}
+
+export interface ToolUseOut {
+  name: string;
+  input: Record<string, unknown>;
+  result: string;
 }
 
 async function handle<T>(res: Response): Promise<T> {

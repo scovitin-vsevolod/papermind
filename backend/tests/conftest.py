@@ -25,6 +25,7 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base, get_db
 from app.main import app
 from app.services import claude as claude_service
+from app.services import openai_provider as openai_service
 from app.services import qdrant as qdrant_service
 
 # ── Fake Claude ───────────────────────────────────────────────────────────────
@@ -32,26 +33,43 @@ from app.services import qdrant as qdrant_service
 
 @dataclass
 class _FakeBlock:
-    text: str
+    """Polymorphic content block.
+
+    For text blocks: ``type="text"`` + ``text`` set.
+    For tool_use blocks: ``type="tool_use"`` + ``id`` + ``name`` + ``input``.
+    For server_tool_use blocks: ``type="server_tool_use"`` + ``name`` + ``input``.
+    """
+
     type: str = "text"
+    text: str = ""
+    id: str = ""
+    name: str = ""
+    input: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class _FakeMessage:
     content: list[_FakeBlock]
+    stop_reason: str = "end_turn"
 
 
 @dataclass
 class FakeClaude:
     """Test double for ``anthropic.Anthropic``.
 
-    Mimics the ``client.messages.create(...)`` shape: returns a message
-    whose first content block carries ``response_text``. Each call is
-    recorded in ``calls`` so tests can assert on the prompt that was
-    sent (model, system prompt, message contents).
+    Two modes:
+    - **Simple:** ``response_text`` is returned as one text block per call.
+      Stop reason is "end_turn". Default behaviour.
+    - **Scripted:** ``responses`` is a list of ``_FakeMessage`` — one per
+      successive ``create()`` call. Used for tool-loop tests where Claude
+      needs to emit a tool_use first, then a final text answer.
+
+    Each call is recorded in ``calls`` so tests can assert on the prompt
+    that was sent (model, system, messages, tools).
     """
 
     response_text: str = "Default fake answer."
+    responses: list[_FakeMessage] = field(default_factory=list)
     calls: list[dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -60,7 +78,78 @@ class FakeClaude:
 
     def create(self, **kwargs: Any) -> _FakeMessage:
         self.calls.append(kwargs)
-        return _FakeMessage(content=[_FakeBlock(text=self.response_text)])
+        if self.responses:
+            # Pop scripted responses in order; the last one repeats forever
+            # so a runaway loop doesn't IndexError mid-test.
+            if len(self.responses) > 1:
+                return self.responses.pop(0)
+            return self.responses[0]
+        return _FakeMessage(content=[_FakeBlock(type="text", text=self.response_text)])
+
+
+def make_text_message(text: str) -> _FakeMessage:
+    return _FakeMessage(content=[_FakeBlock(type="text", text=text)])
+
+
+# ── Fake OpenAI ──────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _FakeChoiceMessage:
+    content: str
+
+
+@dataclass
+class _FakeChoice:
+    message: _FakeChoiceMessage
+
+
+@dataclass
+class _FakeChatCompletion:
+    choices: list[_FakeChoice]
+
+
+@dataclass
+class FakeOpenAI:
+    """Test double for ``openai.OpenAI``.
+
+    Implements only the slice we use: ``client.chat.completions.create()``.
+    Every call is recorded in ``calls``.
+    """
+
+    response_text: str = "OpenAI fake answer."
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def chat(self) -> FakeOpenAI:
+        return self
+
+    @property
+    def completions(self) -> FakeOpenAI:
+        return self
+
+    def create(self, **kwargs: Any) -> _FakeChatCompletion:
+        self.calls.append(kwargs)
+        return _FakeChatCompletion(
+            choices=[_FakeChoice(message=_FakeChoiceMessage(content=self.response_text))]
+        )
+
+
+def make_tool_use_message(
+    tool_use_id: str,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    leading_text: str = "",
+) -> _FakeMessage:
+    """A message that asks the host to run a custom tool (calculator etc.)."""
+
+    blocks: list[_FakeBlock] = []
+    if leading_text:
+        blocks.append(_FakeBlock(type="text", text=leading_text))
+    blocks.append(
+        _FakeBlock(type="tool_use", id=tool_use_id, name=tool_name, input=tool_input)
+    )
+    return _FakeMessage(content=blocks, stop_reason="tool_use")
 
 
 @pytest.fixture
@@ -102,7 +191,23 @@ def fake_claude() -> Iterator[FakeClaude]:
 
 
 @pytest.fixture
-def client(db_session: Session, fake_claude: FakeClaude) -> Iterator[TestClient]:
+def fake_openai() -> Iterator[FakeOpenAI]:
+    """Same defensive pattern for the OpenAI side of the comparison."""
+
+    fake = FakeOpenAI()
+    openai_service.use_client_for_tests(fake)
+    try:
+        yield fake
+    finally:
+        openai_service.use_client_for_tests(FakeOpenAI())
+
+
+@pytest.fixture
+def client(
+    db_session: Session,
+    fake_claude: FakeClaude,
+    fake_openai: FakeOpenAI,
+) -> Iterator[TestClient]:
     def _override_get_db() -> Iterator[Session]:
         yield db_session
 

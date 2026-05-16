@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import Query
-from app.schemas import AskRequest, AskResponse, CitationOut
-from app.services import claude, qdrant
+from app.schemas import AskRequest, AskResponse, CitationOut, ToolUseOut
+from app.services import claude, openai_provider, qdrant
 from app.services.embeddings import embed
 
 router = APIRouter(prefix="/ask", tags=["ask"])
@@ -42,8 +42,22 @@ def ask(payload: AskRequest, db: Session = Depends(get_db)) -> AskResponse:
             f"no chunks found for document_id={payload.document_id}",
         )
 
-    contexts = [claude.ChunkContext(chunk_id=h.chunk_id, text=h.text) for h in hits]
-    result = claude.ask(payload.question, contexts)
+    if payload.provider == "openai":
+        oa_contexts = [
+            openai_provider.ChunkContext(chunk_id=h.chunk_id, text=h.text) for h in hits
+        ]
+        oa = openai_provider.ask(payload.question, oa_contexts)
+        # Bridge the OpenAI result into the same shape Claude returns, so the
+        # rest of the handler (DB log, response shaping) stays one code path.
+        result = claude.AskResult(
+            answer=oa.answer,
+            cited_chunk_ids=oa.cited_chunk_ids,
+            model=oa.model,
+            tool_uses=[],
+        )
+    else:
+        contexts = [claude.ChunkContext(chunk_id=h.chunk_id, text=h.text) for h in hits]
+        result = claude.ask(payload.question, contexts, use_tools=payload.use_tools)
 
     db.add(
         Query(
@@ -66,4 +80,12 @@ def ask(payload: AskRequest, db: Session = Depends(get_db)) -> AskResponse:
         for h in hits
         if h.chunk_id in cited
     ]
-    return AskResponse(answer=result.answer, model=result.model, citations=citations)
+    tool_uses_out = [
+        ToolUseOut(name=t.name, input=t.input, result=t.result) for t in result.tool_uses
+    ]
+    return AskResponse(
+        answer=result.answer,
+        model=result.model,
+        citations=citations,
+        tool_uses=tool_uses_out,
+    )

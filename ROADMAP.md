@@ -117,30 +117,51 @@ Goal: Claude can use tools to answer questions that go beyond the
 uploaded docs, and the UI lets you compare Claude vs GPT-4 on the
 same query.
 
-- [ ] **2.1 Tool use — web search.** Claude `tool_use` API,
-  `web_search` tool (start with a free provider like DuckDuckGo).
-  *Demo: ask a question requiring fresh info — Claude calls the tool,
-  uses results in the answer.*
-- [ ] **2.2 Tool use — calculator.** Trivial tool that evaluates a
-  math expression. *Demo: "what's 12% of 3475?" → tool call → exact
-  number in answer.*
-- [ ] **2.3 Tool use — fetch URL.** Tool that downloads a page and
-  returns its text. *Demo: "summarize https://…" works without prior
-  ingestion.*
-- [ ] **2.4 OpenAI service.** Parallel `services/openai.py` mirroring
-  the Claude service interface. *Demo: same `/ask` works with
-  `?model=gpt-4`.*
-- [ ] **2.5 Side-by-side UI.** New UI mode: one question → two
-  columns, Claude and GPT-4 answers rendered in parallel, with
-  latency and token counts. *Demo: ask the same question, see both
-  side by side.*
-- [ ] **2.6 voyage-3 embeddings.** Optional embedding backend.
-  Config switch `EMBEDDING_PROVIDER=voyage|sentence-transformers`.
-  *Demo: re-index a doc with voyage-3, both indexes coexist.*
-- [ ] **2.7 Retrieval quality experiment.** Script: 10 questions × 2
-  embedding backends → compare recall@5 manually. Write up the
-  result in `docs/retrieval-experiment.md`. *Demo: a markdown report
-  with conclusions. Interview talking point #2.*
+- [x] **2.1 Tool use — web search.** Anthropic's server-side
+  `web_search_20260209` enabled when `AskRequest.use_tools=True`. Single
+  API call from our side; Anthropic runs the search. `server_tool_use`
+  blocks are recorded in the response as `tool_uses[]` for transparency.
+- [x] **2.2 Tool use — calculator.** Custom client-side tool with a
+  safe AST evaluator (whitelisted ops, rejects names/calls/imports).
+  Exercises the multi-turn loop: Claude emits `tool_use` → we execute
+  → feed `tool_result` back, capped at 5 iterations. 7 unit tests on
+  the evaluator + 1 end-to-end loop test.
+- [x] **2.3 Tool use — fetch URL.** Anthropic's server-side
+  `web_fetch_20260209`, same shape as web_search. Enabled together
+  with the other tools by the same `use_tools` flag.
+- [x] **2.4 OpenAI service.** `services/openai_provider.py` mirrors the
+  Claude service surface: same `ChunkContext` / `AskResult`, same RAG
+  prompt (`SYSTEM_PROMPT` imported from claude.py — comparison shows
+  *model* difference, not *prompt* difference), citation parser
+  duplicated next to the provider so the two integrations stay
+  independently swappable. `/ask` accepts `provider: "claude" | "openai"`
+  (default `claude`); pydantic Literal rejects anything else with 422.
+  `FakeOpenAI` test double in conftest. 5 new tests verify routing,
+  isolation, citations, and validation.
+- [x] **2.5 Side-by-side UI.** `App.tsx`: "Compare Claude vs GPT-4"
+  checkbox fires both requests in parallel (`Promise.all`); each pane
+  fills in independently as its response arrives (no waiting on the
+  slow one). New `ResultPane` component handles idle / loading /
+  error / ok states. Tool-call rows surface above citations when
+  `use_tools` is enabled. *Demo: tick "Compare", ask a question — two
+  columns rendered as soon as each provider responds.*
+- [x] **2.6 voyage-3 embeddings.** Two backends behind one `embeddings`
+  module API: `sentence-transformers/all-MiniLM-L6-v2` (384 dim, local,
+  free) and `voyageai`'s `voyage-3` (1024 dim, API, paid). Switched via
+  `EMBEDDING_PROVIDER` env var. Different dims → different collections:
+  `qdrant.collection_name_for_backend()` builds `papermind_minilm` and
+  `papermind_voyage` so both can coexist. All Qdrant service functions
+  take an optional `backend=` override for the experiment path. Voyage
+  embeddings use `input_type="document"` on upsert and `"query"` on
+  search (model is asymmetric). Tests stay on the local backend.
+- [x] **2.7 Retrieval quality experiment.**
+  `backend/scripts/retrieval_experiment.py` runs the same 10-doc corpus
+  and 10 hand-labelled queries through both backends and writes
+  `docs/retrieval-experiment.md` (recall@5 per query + mean). Idempotent:
+  drops + recreates the two experiment collections on each run. Needs
+  `VOYAGE_API_KEY` + a running Qdrant; fails fast with a clear message
+  if either is missing. *Demo: `uv run python scripts/retrieval_experiment.py`
+  → updated `docs/retrieval-experiment.md`. Interview talking point #2.*
 
 ---
 

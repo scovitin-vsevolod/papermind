@@ -1,67 +1,116 @@
-"""Local sentence-transformers embeddings.
+"""Embedding backends — sentence-transformers (local) or voyage-3 (API).
 
-Why local + lazy load
----------------------
-- **Free.** Phase 1 has no embedding-API budget; ``voyage-3`` joins in
-  Phase 2 as a quality comparison.
-- **Lazy load.** Importing this module is cheap — FastAPI startup stays
-  fast and tests that don't need real embeddings don't pay the cost.
-  The ~80 MB model download happens on the first call to
-  :func:`embed`. After that the model lives in process memory.
-- **Singleton via ``lru_cache``.** Loading the model twice in the same
-  process wastes ~250 MB of RAM. ``lru_cache(maxsize=1)`` gives a
-  thread-safe singleton with no extra plumbing.
+Phase 1 used only sentence-transformers/all-MiniLM-L6-v2 (384 dim, free,
+local). Phase 2 adds Voyage's ``voyage-3`` (1024 dim, paid, API call) so
+we can measure whether the API model retrieves better on real documents.
 
-Why ``normalize_embeddings=True``
----------------------------------
-We normalize to unit length so cosine similarity reduces to a plain
-dot product. Qdrant's ``COSINE`` distance does the normalization
-internally if vectors aren't normalized, but doing it once at encode
-time saves the work on every search. It also means we can use
-``DOT`` distance later without changing the index.
+The two backends are NOT a drop-in swap at the Qdrant layer: different
+output dimensions need different collections. The Qdrant service picks
+the collection name based on the current backend (see :func:`current_backend`
+and ``qdrant.collection_name_for_backend``).
 
-Sync vs async
--------------
-``SentenceTransformer.encode`` is synchronous (torch under the hood).
-For Phase 1 we call it directly from request handlers. In a higher-
-load setup we'd wrap with ``asyncio.to_thread`` — Phase 4 territory.
+Selection
+---------
+``settings.embedding_provider`` chooses at process start. The local backend
+loads its model lazily on first call. The voyage backend constructs its
+client lazily (no network call until you actually embed).
 """
 
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Any
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from app.config import settings
 
+# ── Local backend (sentence-transformers / all-MiniLM-L6-v2) ─────────────────
+
 
 @lru_cache(maxsize=1)
-def _model() -> SentenceTransformer:
+def _st_model() -> Any:
+    # Import inside the cached factory so the heavy torch/transformers
+    # import only happens if the local backend is actually used.
+    from sentence_transformers import SentenceTransformer
+
     return SentenceTransformer(settings.embedding_model)
 
 
-def embedding_dim() -> int:
-    """Return the output dimension of the configured model.
-
-    Triggers model load on first call.
-    """
-    return _model().get_embedding_dimension()
-
-
-def embed(texts: list[str]) -> np.ndarray:
-    """Encode a batch of texts into unit-length vectors.
-
-    Returns a ``(len(texts), embedding_dim)`` float32 array. Empty
-    input returns an empty array of the right shape (handy for callers
-    that want a uniform return type).
-    """
-    if not texts:
-        return np.empty((0, embedding_dim()), dtype=np.float32)
-    return _model().encode(
+def _st_embed(texts: list[str]) -> np.ndarray:
+    return _st_model().encode(
         texts,
         convert_to_numpy=True,
         normalize_embeddings=True,
         show_progress_bar=False,
     )
+
+
+def _st_dim() -> int:
+    return _st_model().get_embedding_dimension()
+
+
+# ── Voyage backend (voyage-3) ────────────────────────────────────────────────
+
+
+@lru_cache(maxsize=1)
+def _voyage_client() -> Any:
+    import voyageai
+
+    return voyageai.Client(api_key=settings.voyage_api_key or None)
+
+
+def _voyage_embed(texts: list[str], *, input_type: str = "document") -> np.ndarray:
+    # voyage-3 distinguishes "document" (corpus, what you upsert) from "query"
+    # (what you search with). We default to "document" because most embed()
+    # calls in the pipeline are for chunks; the search path passes "query".
+    result = _voyage_client().embed(
+        texts,
+        model=settings.voyage_model,
+        input_type=input_type,
+    )
+    vectors = np.asarray(result.embeddings, dtype=np.float32)
+    # Voyage embeddings are L2-normalised by the API in current versions,
+    # but normalise defensively so cosine == dot product downstream regardless.
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return vectors / norms
+
+
+def _voyage_dim() -> int:
+    # voyage-3 is documented as 1024-dim. Hardcoded rather than probed so
+    # we can compute the dim without spending an API call.
+    return 1024
+
+
+# ── Public API — switches on settings.embedding_provider ─────────────────────
+
+
+def current_backend() -> str:
+    """The active backend identifier — used by Qdrant for collection naming."""
+    return settings.embedding_provider
+
+
+def embedding_dim() -> int:
+    if settings.embedding_provider == "voyage":
+        return _voyage_dim()
+    return _st_dim()
+
+
+def embed(texts: list[str], *, is_query: bool = False) -> np.ndarray:
+    """Embed a batch of texts as unit-length float32 vectors.
+
+    ``is_query`` only matters for the voyage backend, which distinguishes
+    document and query embeddings. The local model treats both the same.
+    """
+    if not texts:
+        return np.empty((0, embedding_dim()), dtype=np.float32)
+    if settings.embedding_provider == "voyage":
+        return _voyage_embed(texts, input_type="query" if is_query else "document")
+    return _st_embed(texts)
+
+
+def reset_caches_for_tests() -> None:
+    """Clear cached clients so a settings change in tests actually takes effect."""
+    _st_model.cache_clear()
+    _voyage_client.cache_clear()
