@@ -1,0 +1,80 @@
+name: CI
+
+# Run on every push to main and on every pull request targeting main.
+# Keeps feedback fast: this is a side-of-desk learning project, not a
+# release-train monorepo — we don't need matrix builds across Python
+# minor versions or three OSes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: backend — lint + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # uv is fast and matches the local dev setup exactly. Pinning a
+      # version avoids surprise toolchain shifts breaking CI when an
+      # `uv` major lands.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.4.x"
+
+      - name: Cache the uv resolver state
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check app/ tests/
+
+      - name: Test (pytest + coverage)
+        # Coverage runs against app/ and prints a missing-lines summary so
+        # a failing job is easy to triage from the Actions log alone.
+        # The 70% gate matches Phase 4's stated target.
+        run: uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=70
+
+  frontend:
+    name: frontend — type check + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          # Built-in npm cache keyed off package-lock.json.
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        # `ci` (not `install`) — strict mode that respects the lock file
+        # and refuses if it's out of sync with package.json. Reproducible.
+        run: npm ci
+
+      - name: Build (tsc + vite)
+        # `npm run build` does `tsc -b && vite build`. tsc catches type
+        # errors before bundling so a green CI is a green type check.
+        run: npm run build

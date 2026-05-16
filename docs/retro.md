@@ -1,3 +1,84 @@
+# PaperMind retros
+
+One section per phase. Add to it as you ship; don't rewrite older
+sections — the value is the timestamped trail of what you learned when.
+
+---
+
+## Phase 4 retro — tests, CI/CD, deploy
+
+### What got built
+
+- pytest-cov in dev deps; baseline came in at **94%** without any new
+  tests. The 70% target was nominal.
+- GitHub Actions workflow with two parallel jobs (backend lint+test,
+  frontend type check + build), uv and npm caches keyed off the
+  respective lock files. Backend job hard-gates on
+  `--cov-fail-under=70`.
+- Multi-stage Dockerfiles for both apps. Backend ~5.4 GB (torch +
+  sentence-transformers dominate), frontend ~50 MB. Non-root user in
+  the backend runtime stage, `.dockerignore` keeps venvs and DBs out
+  of the build context.
+- nginx serves the prebuilt Vite bundle and proxies `/api/*` to the
+  backend — same shape as the dev-server proxy, so frontend code
+  ships identical in dev and prod.
+- `fly.toml` for both apps, plus a step-by-step `docs/deploy.md`
+  that covers the full Fly.io flow (4 apps: backend + frontend +
+  Qdrant + Neo4j).
+
+### Surprises and lessons
+
+**5.4 GB is a lot of container for a Q&A app.** The torch stack +
+sentence-transformers explain ~3.5 GB. Production should run with
+`EMBEDDING_PROVIDER=voyage` (already wired in Phase 2), which strips
+the local model entirely and brings the image down to ~1 GB. Phase 2's
+"side-quest" experiment turned out to be the thing that makes
+production tenable.
+
+**Coverage was higher than expected because the test strategy was
+right from Phase 1.** No mocks for our own services — in-memory
+Qdrant, FakeClaude/FakeOpenAI/FakeNeo4jDriver that mimic the real
+interfaces. Every code path that doesn't hit a real external API ran
+in the suite. The remaining uncovered lines are the voyage backend
+(no API key in CI) and two `# noqa: BLE001` error branches we
+specifically widened — both honest gaps, not test debt.
+
+**Fly's deprecated free tier matters.** Earlier roadmap talk assumed
+"deploy is free for a personal project". It isn't anymore: ~$3-8/month
+idle, more under load. The deploy doc is honest about this — better to
+surface the bill in the README than hand-wave it.
+
+**SQLite + Fly volumes works fine for single-user.** The temptation
+is to immediately reach for Postgres in prod. We don't need to. SQLite
+on an attached volume survives deploys and lives perfectly within the
+1-user assumption that's spelled out in the deploy doc.
+
+### Interview talking points (Phase 4 specific)
+
+- **"I treated CI as a contract with the future me."** The pipeline
+  enforces 70% coverage *and* type-checks the frontend through `npm
+  run build`. A green CI means a deploy is safe to push.
+- **"The Docker image is honestly fat — and there's a documented fix."**
+  Voyage embeddings remove ~3.5 GB. The retro names the trade-off
+  instead of pretending the image is small.
+- **"I picked Fly.io over Vercel/Render because the project has a
+  Docker-shaped stack."** Vector DB + graph DB + Python service don't
+  fit serverless platforms cleanly; Fly's per-app machines give every
+  service its own predictable home.
+
+### What stays out of scope
+
+- **Auth.** Single-user, URL-only access today. Cloudflare Access or
+  an OAuth proxy is the right next step before sharing the URL.
+- **Backups.** Volumes survive deploys; they don't survive data
+  corruption. A weekly `sqlite3 .backup` + Qdrant snapshot to S3 would
+  close that gap.
+- **Async ingestion.** Upload blocks while extraction runs. A queue
+  (Fly Machines, RQ) would let the UI return immediately and a worker
+  finish the slow part — only worth it once there are multiple users.
+
+---
+
 # Phase 1 Retro — MVP RAG
 
 Written at the end of Phase 1, before opening Phase 2. The goal of

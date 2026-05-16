@@ -1,0 +1,17 @@
+# Don't ship venvs, caches, test artefacts, or the local SQLite into
+# the build context. Big speedup on `docker build` and keeps the final
+# image clean.
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+papermind.db
+papermind.db-journal
+uv.lock
+.env
+.env.*
+!.env.example

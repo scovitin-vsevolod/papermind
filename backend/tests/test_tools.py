@@ -183,3 +183,28 @@ def test_all_tools_list_has_three_entries():
     # Sanity: the public surface advertises exactly three tools.
     assert len(ALL_TOOLS) == 3
     assert {t["name"] for t in ALL_TOOLS} == {"web_search", "web_fetch", "calculator"}
+
+
+def test_tool_loop_hard_caps_at_max_iterations(
+    client: TestClient, fake_claude: FakeClaude
+):
+    # If Claude keeps emitting tool_use forever (bug or hostile), the loop
+    # must bail rather than burn budget. Cap is _MAX_TOOL_ITERATIONS=5.
+    _upload(client, "x.txt", b"context")
+    fake_claude.calls.clear()
+
+    # Scripted: every response is "use the calculator" — never a final
+    # text answer. Should hit the cap after 5 invocations and return
+    # what's there (empty answer from the last response's text blocks).
+    looping = make_tool_use_message(
+        tool_use_id="toolu_loop",
+        tool_name="calculator",
+        tool_input={"expression": "1 + 1"},
+    )
+    fake_claude.responses = [looping] * 10  # more than the cap
+
+    r = client.post("/ask", json={"question": "loop?", "use_tools": True})
+    assert r.status_code == 200
+    # 1 initial call + 5 loop iterations = 6 calls total; the cap held.
+    # Without the cap, 10 scripted responses would all be consumed.
+    assert len(fake_claude.calls) == 6

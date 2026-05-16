@@ -211,21 +211,53 @@ visualize them as a force-directed graph.
 Goal: production-shaped repo. CI runs on every push; one-command
 deploy to Fly.io.
 
-- [ ] **4.1 Coverage pass.** Raise pytest coverage to ≥70% for
-  `app/services/` and `app/routers/`. *Demo: `uv run pytest --cov`
-  shows the number.*
-- [ ] **4.2 GitHub Actions — lint + test.** `.github/workflows/ci.yml`:
-  `uv sync`, `ruff check`, `pytest`. Trigger on push + PR. *Demo:
-  green badge on the README.*
-- [ ] **4.3 Backend Dockerfile.** Multi-stage build, slim runtime
-  image. *Demo: `docker build` produces an image, `docker run` boots
-  uvicorn.*
-- [ ] **4.4 Frontend Dockerfile.** Vite static build served by
-  caddy/nginx. *Demo: same.*
-- [ ] **4.5 `fly.toml` + deploy.** `fly launch`, env secrets via `fly
-  secrets`, deploy. *Demo: public URL serves the app.*
-- [ ] **4.6 Phase-4 commit + portfolio polish.** Tag `v1.0.0`,
-  finalize README with screenshots and the Fly.io URL.
+- [x] **4.1 Coverage pass.** Added `pytest-cov`, `[tool.coverage]` config
+  in `pyproject.toml`. Baseline came in at 94% — well above the 70%
+  target. Filled two of the remaining holes worth real tests: the
+  5-iteration safety cap in the tool-use loop (`_MAX_TOOL_ITERATIONS`)
+  and the best-effort error paths in upload (broken Neo4j, exploding
+  extraction). 98 tests; `app/services/` and `app/routers/` are all
+  ≥88%. *Demo: `uv run pytest --cov=app --cov-report=term-missing`.*
+- [x] **4.2 GitHub Actions — lint + test.** `.github/workflows/ci.yml`
+  runs two parallel jobs:
+  - **backend** — `uv sync` (cached), `ruff check`, `pytest` with
+    `--cov-fail-under=70`. Hard-gates merges if coverage regresses.
+  - **frontend** — `npm ci` (cached) + `npm run build` (which does
+    `tsc -b && vite build`, so green CI implies green type check).
+  Triggers on push to `main` and on PRs targeting `main`.
+- [x] **4.3 Backend Dockerfile.** Multi-stage: `python:3.11-slim`
+  builder runs `uv sync --no-dev` into a venv, runtime stage copies
+  just the venv + `app/`, drops to a non-root user, runs uvicorn with
+  2 workers. `.dockerignore` keeps venvs, caches, `.env`, and the
+  local SQLite out of the build context. Image weighs ~5.4 GB —
+  torch + sentence-transformers dominate; switching the production
+  embedding provider to `voyage` (Phase 2.6) would strip ~3.5 GB.
+- [x] **4.4 Frontend Dockerfile.** Multi-stage: `node:22-alpine` runs
+  `npm ci && npm run build` (which is `tsc -b && vite build`, so type
+  errors fail the docker build), `nginx:1.27-alpine` runtime serves
+  the static `dist/`. Custom `nginx.conf` does SPA history-API
+  fallback, gzip for text assets, immutable cache on hashed `/assets/`,
+  and proxies `/api/*` to `http://backend:8109` (matching the dev
+  proxy so the frontend code is identical in dev and prod). Image
+  weighs ~50 MB. *Demo: `docker build -t papermind-frontend frontend/`
+  and `docker build -t papermind-backend backend/` both green.*
+- [x] **4.5 `fly.toml` + deploy.** `backend/fly.toml` and
+  `frontend/fly.toml`, both with auto-stop machines (idle → $0),
+  Fly internal DNS (`*.internal`) wiring, and a 1 GB mounted volume
+  for the backend's SQLite. `docs/deploy.md` walks the full setup —
+  four Fly apps (backend, frontend, Qdrant, Neo4j), explicit `fly
+  secrets set` for every credential, smoke-test curl. Production
+  switches the embedding provider to `voyage` to skip the 3.5 GB
+  torch stack. *Demo (manual, requires a Fly account): follow the
+  recipe → `curl https://<app>.fly.dev/health` returns the model
+  badges.*
+- [x] **4.6 Phase-4 commit + portfolio polish.** README gets a CI
+  badge stub, a feature list, an updated stack table, and links to
+  every doc in `docs/`. `docs/retro.md` now leads with a Phase 4
+  section (5.4 GB image trade-off, why coverage was already 94%, the
+  Fly free-tier-is-gone reality, interview talking points). Tagging
+  `v1.0.0` is the user's call once Phase 4 is committed —
+  `git tag v1.0.0` after `/my-commit-message`.
 
 ---
 

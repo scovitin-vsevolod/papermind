@@ -1,0 +1,54 @@
+# Fly.io machine config for the PaperMind backend.
+#
+# This file is committed to the repo; the *app name* and *region* are
+# the only knobs you'll likely tweak per-environment. Secrets
+# (ANTHROPIC_API_KEY, OPENAI_API_KEY, NEO4J_PASSWORD, …) are set
+# separately via `fly secrets set` — see docs/deploy.md.
+
+app = "papermind-backend"  # change to a name unique on Fly.io
+primary_region = "ams"     # pick the region closest to you / Anthropic
+
+[build]
+  # Build the backend image from this directory's Dockerfile.
+  dockerfile = "Dockerfile"
+
+[env]
+  # Non-secret defaults baked into the deployed image. Real keys go in
+  # `fly secrets` (encrypted at rest, never in the image).
+  CLAUDE_MODEL = "claude-sonnet-4-6"
+  OPENAI_MODEL = "gpt-4o"
+  EMBEDDING_PROVIDER = "voyage"
+  # ^ Production uses voyage instead of sentence-transformers — strips
+  #   the ~3.5 GB torch stack from the runtime memory footprint.
+  QDRANT_URL = "http://qdrant.internal:6333"
+  QDRANT_COLLECTION = "papermind"
+  NEO4J_URI = "bolt://neo4j.internal:7687"
+  NEO4J_USER = "neo4j"
+  DATABASE_URL = "sqlite:////data/papermind.db"
+  # ^ SQLite file lives on the attached volume, survives deploys.
+
+[http_service]
+  internal_port = 8109
+  force_https = true
+  # PaperMind is a personal tool, not a high-traffic service. Auto-stop
+  # idle machines to keep the bill at literal pennies.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 50
+    soft_limit = 20
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+  # 1 GB fits the embedding model + a couple of uvicorn workers.
+  # Bump to 2gb if upload requests OOM during embedding.
+
+[[mounts]]
+  # Persist the SQLite metadata DB across deploys. Qdrant + Neo4j run
+  # in their own apps (see docs/deploy.md) and own their own volumes.
+  source = "papermind_data"
+  destination = "/data"

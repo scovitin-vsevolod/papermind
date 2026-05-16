@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.services import qdrant as qdrant_service
 from app.services.embeddings import embed
+from tests.conftest import FakeClaude
 
 
 def _upload(client: TestClient, name: str, body: bytes, mime: str = "text/plain"):
@@ -109,3 +110,55 @@ def test_upload_markdown_preserves_content(client: TestClient):
     hits = qdrant_service.search(embed(["features of PaperMind"])[0], top_k=3, document_id=doc_id)
     assert hits
     assert any("PaperMind" in h.text for h in hits)
+
+
+def test_upload_succeeds_even_when_graph_subsystem_is_broken(client: TestClient):
+    # The graph hook is best-effort: a broken Neo4j (or a broken Claude
+    # during extraction) must NOT fail the upload. Swap the graph driver
+    # for one that raises on every session() — upload still returns 201
+    # and the document still becomes READY.
+    from app.services import graph as graph_service
+
+    class BrokenDriver:
+        def session(self):
+            raise ConnectionError("neo4j unreachable")
+
+    graph_service.use_driver_for_tests(BrokenDriver())
+    try:
+        r = _upload(client, "broken-graph.txt", b"Some text content.")
+    finally:
+        # conftest's fake_neo4j fixture teardown also resets, but be
+        # explicit so subsequent assertions inside this test see clean state.
+        from tests.conftest import FakeNeo4jDriver
+
+        graph_service.use_driver_for_tests(FakeNeo4jDriver())
+    assert r.status_code == 201, r.text
+    assert r.json()["status"] == "ready"
+
+
+def test_upload_succeeds_even_when_extraction_raises(
+    client: TestClient, fake_claude: FakeClaude
+):
+    # Per-chunk extraction failures (Claude returning garbage, parse
+    # errors, anything) must be caught — the document still ingests.
+    # Force Claude to raise from the extraction call.
+    class _Boom:
+        def __init__(self) -> None:
+            self.calls: list = []
+
+        @property
+        def messages(self):
+            return self
+
+        def create(self, **_kwargs):
+            raise RuntimeError("simulated claude failure")
+
+    from app.services import claude as claude_service
+
+    claude_service.use_client_for_tests(_Boom())
+    try:
+        r = _upload(client, "ext-fail.txt", b"Anything goes here.")
+    finally:
+        claude_service.use_client_for_tests(fake_claude)
+    assert r.status_code == 201, r.text
+    assert r.json()["status"] == "ready"

@@ -1,25 +1,49 @@
 # PaperMind
 
+[![CI](https://github.com/REPLACE-ME-with-your-username/PaperMind/actions/workflows/ci.yml/badge.svg)](https://github.com/REPLACE-ME-with-your-username/PaperMind/actions/workflows/ci.yml)
+
 Personal research companion built on the Claude API. Upload documents
 (PDF, DOCX, MD, TXT, HTML, …), ask questions grounded in their content
-with citations, and (later) build a knowledge graph from them.
+with citations, compare Claude vs GPT-4 side-by-side, and visualise the
+entities extracted from your corpus as a force-directed knowledge graph.
 
 Designed as a learning project + portfolio piece for a Junior AI
 Developer interview.
 
+## Features
+
+- **RAG over arbitrary documents.** Upload → `markitdown` parse →
+  paragraph-aware chunker → `sentence-transformers` (or `voyage-3`)
+  embeddings → Qdrant → Claude answers grounded in cited chunks.
+- **Tool use.** Claude can call web_search and web_fetch (Anthropic
+  server-side) plus a safe client-side calculator (AST-evaluated,
+  whitelisted operators).
+- **Multi-provider comparison.** One question, two columns, two
+  providers (Claude + GPT-4) rendered as each response lands.
+- **Knowledge graph.** Per-chunk entity/relation extraction via Claude's
+  JSON-schema mode, deduplicated into Neo4j, rendered with
+  `react-force-graph-2d` in the browser.
+- **Side-quest harnesses.** `backend/scripts/retrieval_experiment.py`
+  runs a recall@5 A/B between local MiniLM and voyage-3.
+
 - [`CLAUDE.md`](CLAUDE.md) — stack rationale and assistant context
 - [`ROADMAP.md`](ROADMAP.md) — step-by-step plan with progress checkboxes
 - [`docs/models.md`](docs/models.md) — current model defaults and how to switch
-- [`docs/retro.md`](docs/retro.md) — Phase 1 retro: surprises, lessons, interview talking points
+- [`docs/retro.md`](docs/retro.md) — phase-by-phase retros: surprises, lessons, interview talking points
+- [`docs/retrieval-experiment.md`](docs/retrieval-experiment.md) — MiniLM vs voyage-3 recall@5 harness
+- [`docs/deploy.md`](docs/deploy.md) — Fly.io deployment recipe
 
 ## Stack
 
-- **Backend:** Python 3.11+ · FastAPI · SQLAlchemy + SQLite · `uv`
-- **LLM:** Claude (`anthropic` SDK)
-- **Embeddings:** `sentence-transformers` (local)
-- **Vector DB:** Qdrant (single Docker container)
+- **Backend:** Python 3.11 · FastAPI · SQLAlchemy + SQLite · `uv`
+- **LLMs:** Claude (`anthropic`) + GPT-4 (`openai`) — switchable per request
+- **Embeddings:** `sentence-transformers` (local) or `voyage-3` (API)
+- **Vector DB:** Qdrant
+- **Knowledge graph:** Neo4j 5
 - **Ingestion:** `markitdown` (PDF / DOCX / PPTX / XLSX / MD / HTML / TXT)
-- **Frontend:** Vite + React + TypeScript + Tailwind (Phase 1.5)
+- **Frontend:** Vite 6 · React 19 · TypeScript 5.7 · Tailwind 4 · `react-force-graph-2d`
+- **CI:** GitHub Actions (ruff, pytest with `--cov-fail-under=70`, tsc, vite build)
+- **Deploy:** Docker images + Fly.io (see [docs/deploy.md](docs/deploy.md))
 
 ## First-time setup
 
