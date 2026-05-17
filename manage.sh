@@ -96,24 +96,60 @@ case "${1:-}" in
     ;;
 
   status)
-    echo "── Listening ports ──"
+    echo "── Dev servers ──────────────────────────────────────────────────────────"
     status_port "$FRONTEND_PORT"    "frontend"
     status_port "$BACKEND_PORT"     "backend"
+    echo
+    echo "── Infra (docker-compose) ───────────────────────────────────────────────"
     status_port "$QDRANT_PORT"      "qdrant"
     status_port "$NEO4J_HTTP_PORT"  "neo4j-http"
     status_port "$NEO4J_BOLT_PORT"  "neo4j-bolt"
     echo
-    echo "── Health probes ──"
-    if curl -fs --max-time 2 "http://localhost:${QDRANT_PORT}/readyz" >/dev/null 2>&1; then
-      echo "  ✓ Qdrant /readyz ok"
+    echo "── Health probes ────────────────────────────────────────────────────────"
+    printf '  Backend /health      '
+    curl -sf --max-time 2 "http://localhost:${BACKEND_PORT}/health" >/dev/null \
+      && echo "OK" || echo "FAIL (server may be starting)"
+    printf '  Qdrant /readyz       '
+    curl -sf --max-time 2 "http://localhost:${QDRANT_PORT}/readyz" >/dev/null \
+      && echo "OK" || echo "FAIL"
+    printf '  Neo4j HTTP           '
+    curl -sf --max-time 2 "http://localhost:${NEO4J_HTTP_PORT}/" >/dev/null \
+      && echo "OK" || echo "FAIL"
+    echo
+
+    # Deep readiness — walks DB, Qdrant collection, Neo4j Bolt, Anthropic key,
+    # users. If python3 is around we render a pretty table; otherwise dump JSON.
+    # If the backend is down we say so and skip — no JSON to render.
+    echo "── Deep readiness (/health/deep) ────────────────────────────────────────"
+    deep=$(curl -sf --max-time 5 "http://localhost:${BACKEND_PORT}/health/deep" 2>/dev/null || true)
+    if [[ -z "$deep" ]]; then
+      echo "  (backend not reachable — see /health above)"
+    elif command -v python3 >/dev/null 2>&1; then
+      python3 - <<PY
+import json
+data = json.loads("""$deep""")
+G = "\033[32m"; R = "\033[31m"; N = "\033[0m"
+for name, res in data["checks"].items():
+    mark = f"{G}OK{N}" if res["ok"] else f"{R}FAIL{N}"
+    extra = " · " + ", ".join(
+        f"{k}={v}" for k, v in res.items() if k not in ("ok", "error")
+    )
+    if not res["ok"] and "error" in res:
+        extra += f" · {R}{res['error']}{N}"
+    print(f"  {name:<22} {mark}{extra}")
+top = f"{G}OK{N}" if data["ok"] else f"{R}FAIL{N}"
+print(f"  {'overall':<22} {top} · backend={data.get('backend','?')}")
+PY
     else
-      echo "  ✗ Qdrant not responding"
+      echo "$deep"
     fi
-    if curl -fs --max-time 2 "http://localhost:${NEO4J_HTTP_PORT}/" >/dev/null 2>&1; then
-      echo "  ✓ Neo4j http ok"
-    else
-      echo "  ✗ Neo4j not responding"
-    fi
+    echo
+    echo "── URLs ─────────────────────────────────────────────────────────────────"
+    echo "  App:        http://localhost:${FRONTEND_PORT}"
+    echo "              https://pm.ikornweb.dev  (public proxy, if configured)"
+    echo "  API docs:   http://localhost:${BACKEND_PORT}/docs"
+    echo "  Qdrant:     http://localhost:${QDRANT_PORT}/dashboard"
+    echo "  Neo4j:      http://localhost:${NEO4J_HTTP_PORT}  (user=neo4j)"
     ;;
 
   logs)

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import ask, auth, documents, graph
+from app.routers import ask, auth, documents, graph, health
 
 app = FastAPI(title="PaperMind", version="0.1.0")
 
@@ -14,16 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# health first so it's always reachable even if a later router fails to import.
+app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(ask.router)
 app.include_router(graph.router)
-
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {
-        "status": "ok",
-        "claude_model": settings.claude_model,
-        "embedding_model": settings.embedding_model,
-    }

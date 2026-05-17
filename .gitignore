@@ -37,3 +37,6 @@ infra/volumes/
 
 # Claude Code local settings (machine-specific paths and permissions)
 .claude/settings.local.json
+
+# RecapAI private notes — never commit (launch plans, server hints, etc.)
+.recap/
