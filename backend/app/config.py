@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="")
     openai_model: str = Field(default="gpt-4o")
     qdrant_url: str = Field(default="http://localhost:6333")
+    # Qdrant Cloud requires an API key sent in the `api-key` header. Empty
+    # on local dev (docker-compose Qdrant has no auth); set to the cluster
+    # key on production. Empty string → client passes ``None``, no header.
+    qdrant_api_key: str = Field(default="")
     qdrant_collection: str = Field(default="papermind")
     neo4j_uri: str = Field(default="bolt://localhost:7687")
     neo4j_user: str = Field(default="neo4j")

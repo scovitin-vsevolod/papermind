@@ -72,7 +72,14 @@ _CLIENT: QdrantClient | None = None
 def _client() -> QdrantClient:
     global _CLIENT
     if _CLIENT is None:
-        _CLIENT = QdrantClient(url=settings.qdrant_url)
+        # ``api_key`` is optional: local docker-compose Qdrant has no auth
+        # so we pass ``None`` (== no header), while Qdrant Cloud rejects
+        # unauthenticated calls with 403. ``or None`` collapses the empty-
+        # string default in Settings into a real ``None`` for the client.
+        _CLIENT = QdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key or None,
+        )
     return _CLIENT
 
 

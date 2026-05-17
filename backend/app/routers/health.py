@@ -125,6 +125,26 @@ def _check_anthropic_key() -> dict:
     return {"ok": bool(settings.anthropic_api_key)}
 
 
+def _check_embedding_key() -> dict:
+    """Verify the API key for the *active* embedding provider is set.
+
+    sentence-transformers runs locally and needs no key — always ok=True.
+    voyage hits the Voyage API and dies on the first ingestion without
+    VOYAGE_API_KEY. The active provider comes from settings, so flipping
+    EMBEDDING_PROVIDER also flips which key this check looks at.
+    """
+    provider = settings.embedding_provider
+    if provider == "sentence-transformers":
+        return {"ok": True, "provider": provider, "required": False}
+    if provider == "voyage":
+        return {
+            "ok": bool(settings.voyage_api_key),
+            "provider": provider,
+            "required": True,
+        }
+    return {"ok": False, "provider": provider, "error": "unknown provider"}
+
+
 def _check_users_present(db: Session) -> dict:
     """PaperMind is single-tenant but still gated behind login. Zero
     users == no way to use the UI. Common post-fresh-install gotcha:
@@ -160,6 +180,7 @@ def deep_health(db: DbSession) -> dict:
         "qdrant_collection": _check_qdrant_collection(),
         "neo4j_connect": _check_neo4j_connect(),
         "anthropic_key_set": _check_anthropic_key(),
+        "embedding_key_set": _check_embedding_key(),
         "users_present": _check_users_present(db),
     }
     return {
