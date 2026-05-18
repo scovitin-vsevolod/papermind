@@ -48,6 +48,14 @@ jobs:
         # Coverage runs against app/ and prints a missing-lines summary so
         # a failing job is easy to triage from the Actions log alone.
         # The 70% gate matches Phase 4's stated target.
+        env:
+          # NEO4J_USERNAME has no default in Settings (intentional, see
+          # config.py: silent fallback to `neo4j` hid an AuthError against
+          # Aura whose username is the DB ID). CI has no .env file, so we
+          # set the var explicitly. The value is irrelevant — tests use
+          # dependency_overrides for the Neo4j driver and never open a
+          # real Bolt connection.
+          NEO4J_USERNAME: neo4j
         run: uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=70
 
   frontend:
