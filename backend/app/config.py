@@ -32,7 +32,12 @@ class Settings(BaseSettings):
     qdrant_api_key: str = Field(default="")
     qdrant_collection: str = Field(default="papermind")
     neo4j_uri: str = Field(default="bolt://localhost:7687")
-    neo4j_user: str = Field(default="neo4j")
+    # Aligned with Aura's credentials file format: Aura writes `NEO4J_USERNAME`,
+    # so the env var name matches. No default — for Aura the username is the
+    # DB ID (e.g. `1ba5b58e`), not `neo4j`, so a "looks-fine" default would
+    # silently send the wrong creds and cause an AuthError that's hard to
+    # trace. Missing value → app fails to start, loud and obvious.
+    neo4j_user: str = Field(..., validation_alias="NEO4J_USERNAME")
     neo4j_password: str = Field(default="papermind-dev")
     # Secret used to sign session JWTs. Generate a real one for production:
     #   python3 -c "import secrets; print(secrets.token_urlsafe(64))"

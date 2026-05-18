@@ -166,9 +166,16 @@ def delete_document(document_id: int, db: Session = Depends(get_db)) -> None:
     doc = db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
-    qdrant_service.delete_by_document(document_id)
-    # Best-effort graph cleanup — same reasoning as the ingest hook:
-    # a Neo4j outage shouldn't block deleting from the primary stores.
+    # Best-effort vector cleanup — a document that errored at embed time
+    # never made it to Qdrant, and the collection may not even exist yet
+    # (created lazily on the first upsert). Hard-failing here would strand
+    # the SQLite row forever, leaving the user unable to retry. Same
+    # reasoning as the graph block below: a downstream-store outage
+    # shouldn't block deleting from the primary store (SQLite).
+    try:
+        qdrant_service.delete_by_document(document_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("qdrant cleanup skipped for document %s: %s", document_id, exc)
     try:
         graph_service.delete_for_document(document_id)
     except Exception as exc:  # noqa: BLE001
