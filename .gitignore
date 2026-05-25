@@ -40,3 +40,7 @@ infra/volumes/
 
 # RecapAI private notes — never commit (launch plans, server hints, etc.)
 .recap/
+
+# Local scratch notes — anything ending in .local.md is by convention
+# a personal cheatsheet (HOWTO.local.md, etc.), not project history.
+*.local.md
