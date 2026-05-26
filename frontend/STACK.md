@@ -1,4 +1,4 @@
-> Last updated: 2026-05-15
+> Last updated: 2026-05-26
 
 # Frontend
 
@@ -20,11 +20,14 @@
 | `@vitejs/plugin-react` ^4.3.0 | Fast Refresh / JSX transform |
 | `tailwindcss` ^4.0.0 | Utility CSS framework |
 | `@tailwindcss/vite` ^4.0.0 | Tailwind 4 Vite integration |
+| `@tailwindcss/typography` ^0.5.19 | `prose` class for Markdown answers |
+| `react-markdown` ^10.1.0 + `remark-gfm` ^4.0.1 | Render Claude's Markdown answers (tables, lists, code) |
+| `react-force-graph-2d` ^1.29.1 | Knowledge graph visualization (Phase 3) |
 | `typescript` ^5.7.0 | Type checking (`tsc -b` then `vite build`) |
 
 ## Structure
 
-- `src/App.tsx` — single-file UI: header (model badges) + documents (upload/list/delete) + ask (question + answer + citations)
+- `src/App.tsx` — top-level UI shell (header with model badges, documents pane, ask pane)
 - `src/api.ts` — typed `fetch` wrappers over the backend REST API; owns the wire types
 - `src/index.css` — single `@import "tailwindcss";` line
 - `vite.config.ts` — `react()` + `tailwindcss()` plugins, dev port 5209 (strictPort:true — fails if taken)
